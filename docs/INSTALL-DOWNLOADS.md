@@ -9,7 +9,7 @@
 打开本仓库的 [Releases](https://github.com/Baijin64/BewlyBewly-Downloads/releases)。私有仓库需要先登录有访问权限的 GitHub 账号。
 
 - Chrome/Edge 扩展：选择名称含 Chrome 或 Downloads 的 ZIP，解压到打算长期保留的文件夹。
-- 本地连接器：下载 Bewly-DownloadHelper-0.2.6-x64.msix。
+- 本地连接器：下载 Bewly-DownloadHelper-0.2.7-x64.msix。
 - 其他电脑首次安装 MSIX 时，按 Windows 提示信任随包提供的 BewlyDownload-Development.cer。它是公开证书，不含私钥；只应在你了解并信任维护者时导入。也可自行构建并用自己的代码签名证书签名。
 
 开发证书说明可参考 [Microsoft 的包签名文档](https://learn.microsoft.com/en-us/windows/msix/package/create-certificate-package-signing)。本仓库不会自动更改浏览器安全策略或在后台导入证书。
@@ -36,6 +36,6 @@ FFmpeg 和 aria2 随连接器提供。Node 安装程序下载后会校验 SHA-25
 
 ## 更新与验证范围
 
-浏览器扩展与连接器分别更新。当前连接器 0.2.6 已在维护者电脑验证系统 Node、下载后台、FFmpeg/aria2 和托盘；缺 Node 环境的完整 UAC/MSI 安装交互仍需单独验收。播放优化的真实慢网/CDN 切换测试仍保留到后续。
+浏览器扩展与连接器分别更新。当前连接器 0.2.7 已在维护者电脑验证系统 Node、下载后台、FFmpeg/aria2 和托盘；缺 Node 环境的完整 UAC/MSI 安装交互仍需单独验收。播放优化的真实慢网/CDN 切换测试仍保留到后续。
 
 本分支没有内置 AI 模型，也不会因为下载功能将视频上传到 AI 服务。

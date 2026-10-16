@@ -1,6 +1,6 @@
 # BewlyBewly + Downloads
 
-Personal maintenance fork for the maintainer and friends. Browser extension **0.44.3**, Windows connector **0.2.6**. This is an independent fork, not an official continuation of either upstream project.
+Personal maintenance fork for the maintainer and friends. Browser extension **0.44.4**, Windows connector **0.2.7**. This is an independent fork, not an official continuation of either upstream project.
 
 - **Original BewlyBewly project:** [BewlyBewly/BewlyBewly](https://github.com/BewlyBewly/BewlyBewly), originally by [Hakadao](https://github.com/hakadao). Its MIT license and attribution are preserved.
 - **Bilidown author:** [王子周棋洛 — https://zhouql.vip/](https://zhouql.vip/). Bilidown's workflow and settings inspired the download integration; the local download core in this fork is independently implemented.

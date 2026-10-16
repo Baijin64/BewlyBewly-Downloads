@@ -15,6 +15,15 @@ function chromiumString(value) {
   if (bytes[0] === 1) return bytes.subarray(1).toString('latin1')
   throw new Error('不支持的旧版字符串编码')
 }
+function legacyCover(value) {
+  if (typeof value !== 'string' || value.length > 2048) return ''
+  try {
+    const url = new URL(value.startsWith('//') ? 'https:' + value : value)
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || (url.port && url.port !== '443') || !(url.hostname === 'hdslb.com' || url.hostname.endsWith('.hdslb.com'))) return ''
+    url.protocol = 'https:'
+    return url.href
+  } catch { return '' }
+}
 export function mapLegacySettings(values) {
   const setting = JSON.parse(values.setting || '{}')
   const options = validateOptions({
@@ -86,7 +95,7 @@ export function parseLegacyHistory(content) {
     records.push({
       id: 'legacy-' + createHash('sha256').update(legacyId).digest('hex').slice(0, 32), legacySourceId: legacyId,
       bvid: row.bv, cid: 0, title: row.title.slice(0, 500), part: row.title.slice(0, 500), page: 1,
-      author: String(row.upname || '').slice(0, 200), uid: Number(row.uid) || 0,
+      author: String(row.upname || '').slice(0, 200), uid: Number(row.uid) || 0, cover: legacyCover(row.pic),
       directory: row.path, legacyPath: row.path, legacyType: String(row.type || '').slice(0, 500),
       status: 'completed', progress: 100, speed: 0, error: '', options: validateOptions({}),
       createdAt: new Date().toISOString(), completedAt: String(row.downDate || '').slice(0, 100),
@@ -128,17 +137,23 @@ export class LegacyMigration {
     if (Date.now() - preview.createdAt > 30 * 60000) throw new Error('迁移预览已过期，请重新读取')
     const selected = params.keys || []
     if (!Array.isArray(selected) || selected.some(key => !Object.hasOwn(preview.settings || {}, key))) throw new Error('无效配置选择')
-    let imported = 0, duplicate = 0
+    let imported = 0, duplicate = 0, restoredCovers = 0
     this.store.db.exec('BEGIN IMMEDIATE')
     try {
       if (selected.length) this.store.settings(Object.fromEntries(selected.map(key => [key, preview.settings[key]])))
       if (params.history === true) for (const record of preview.records) {
-        if (this.store.get(record.id) || this.store.get(record.legacySourceId)) duplicate++
-        else { this.store.put(record); imported++ }
+        const existing = this.store.get(record.id) || this.store.get(record.legacySourceId)
+        if (existing) {
+          duplicate++
+          if (!existing.cover && record.cover) {
+            this.store.db.prepare("UPDATE tasks SET data=json_set(data,'$.cover',?) WHERE id=?").run(record.cover, existing.id)
+            restoredCovers++
+          }
+        } else { this.store.put(record); imported++ }
       }
       this.store.db.prepare('DELETE FROM migration_previews WHERE id=?').run(preview.id)
       this.store.db.exec('COMMIT')
     } catch (error) { this.store.db.exec('ROLLBACK'); throw error }
-    return { imported, duplicate, settings: selected.length }
+    return { imported, duplicate, restoredCovers, settings: selected.length }
   }
 }

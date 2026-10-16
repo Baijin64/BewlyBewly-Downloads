@@ -97,6 +97,7 @@ async function commit() {
   error.value = ''
   let count = 0
   let records = 0
+  let covers = 0
   try {
     if (config.value && keys.value.length) {
       const result = await downloadRequest<{ settings: number }>(
@@ -107,14 +108,15 @@ async function commit() {
       config.value = undefined
     }
     if (history.value && importHistory.value) {
-      const result = await downloadRequest<{ imported: number }>(
+      const result = await downloadRequest<{ imported: number, restoredCovers?: number }>(
         'migrationImport',
         { id: history.value.id, history: true },
       )
       records = result.imported
+      covers = result.restoredCovers || 0
       history.value = undefined
     }
-    message.value = `已导入 ${count} 项设置、${records} 条历史记录。`
+    message.value = `已导入 ${count} 项设置、${records} 条历史记录。${covers ? `已补回 ${covers} 张历史封面。` : ''}`
     emit('imported')
     window.dispatchEvent(new Event('bewly-download-changed'))
     window.dispatchEvent(new Event('bewly-download-settings-changed'))

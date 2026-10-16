@@ -13,7 +13,7 @@ using Microsoft.Win32;
 public static class NativeHost
 {
     const string HostName = "io.bewly.download";
-    const string ConnectorVersion = "0.2.6";
+    const string ConnectorVersion = "0.2.7";
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     static extern int GetCurrentPackageFullName(ref uint length, StringBuilder name);
     [StructLayout(LayoutKind.Sequential)]

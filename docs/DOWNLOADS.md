@@ -4,13 +4,15 @@
 
 ## 当前状态
 
-当前个人维护测试版为扩展 **0.44.3**、助手 **0.2.6**（协议 2）。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。Chrome ZIP 为 `dist/BewlyBewly-Downloads-0.44.3-Chrome.zip`，另提供签名 CRX 和连接器 MSIX。安装步骤见 [安装说明](INSTALL-DOWNLOADS.md)。
+当前个人维护测试版为扩展 **0.44.4**、助手 **0.2.7**（协议 2）。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。Chrome ZIP 为 `dist/BewlyBewly-Downloads-0.44.4-Chrome.zip`，另提供签名 CRX 和连接器 MSIX。安装步骤见 [安装说明](INSTALL-DOWNLOADS.md)。
 
 感谢 [BewlyBewly 原项目](https://github.com/BewlyBewly/BewlyBewly) 与 [Bilidown 原作者王子周棋洛](https://zhouql.vip/)。本分支独立维护，不代表原作者继续更新。浏览器扩展更新后需要重载；连接器配置和任务继续使用原本机数据目录。
 
 下载进度复用 Bewly 原有 Progress 组件，使用主题色、6 像素圆角轨道和平滑宽度过渡；明确区分当前视频流/音频流，暂停保留进度且隐藏旧速度，合并与保存附件使用不可计量的处理中动画，完成后才显示已完成。支持减少动态效果和可访问的进度语义。没有新增估算总进度、剩余时间或后台轮询。
 
 任务列表展示视频封面与 UP 主，点击封面或标题打开对应视频，点击 UP 主打开其空间。待下载和下载中显示加入时间，已完成显示完成时间。正常任务已有元数据可直接展示，无需重新下载；旧记录缺少封面、UP 主或完成时间时明确显示未记录，不把导入时间当成下载时间。封面按需加载官方 HTTPS 缩略图，失败显示占位，时间使用浏览器本地时区；旧版无时区日期保留原记录。
+
+0.2.7 修复历史导入遗漏封面：旧版 `pic` 字段保留为 `cover`。重新导入相同历史时只补缺失封面，不覆盖原字段、时间和下载目录，不新增重复任务。本机旧历史 17 条已恢复封面；加载逻辑的后续改进见 [客户端对照与计划](BILIBILI-CLIENT-RESEARCH.md)。
 
 新 MSIX 不再内置 Node.js，压缩包约 27.6 MiB，安装文件约 65.1 MiB。保留 FFmpeg、aria2 和精简后的 Windows x64 迁移依赖。已有兼容系统 Node.js 24+ x64 时直接复用；本机使用原有 24.14.1，没有重复安装或升级 Node。
 
@@ -22,7 +24,7 @@
 
 0.2.4 修复首版新菜单实际弹出时右侧裁切的问题：菜单和各行按 DPI 明确分配尺寸，关闭默认文字列的自动收窄。诊断使用与实际托盘相同的菜单控件，本机 150% 下为 402×408 像素，9 个菜单项均处于客户区内。
 
-助手 0.2.6 此前的 41 项原生测试和实际 MSIX 验证证据继续适用，本轮按 SHA-256 确认同一二进制，没有重复运行原生测试。实际 MSIX 已验证系统 Node、FFmpeg 转 MP3、aria2、托盘和管道释放，更新时原记录与设置保持一致。官方 MSI 下载、哈希及 Windows 签名验证通过；缺 Node 机器上的完整 UAC/MSI 交互仍需单独实测。证据见 `dist/native-ui-0.2.6-verification.json` 与 `dist/installed-runtime-0.2.6-verification.json`。
+助手 0.2.7 此前的 41 项原生测试和实际 MSIX 验证证据继续适用，本轮按 SHA-256 确认同一二进制，没有重复运行原生测试。实际 MSIX 已验证系统 Node、FFmpeg 转 MP3、aria2、托盘和管道释放，更新时原记录与设置保持一致。官方 MSI 下载、哈希及 Windows 签名验证通过；缺 Node 机器上的完整 UAC/MSI 交互仍需单独实测。证据见 `dist/native-ui-0.2.7-verification.json` 与 `dist/installed-runtime-0.2.7-verification.json`。
 
 网页下载 UI 保留 0.44.0 的统一选择按钮与开关，本轮改进进度条。64 项扩展测试、类型检查、ESLint 和生产构建通过，CRX3 签名及固定身份检查通过。Edge 本地模拟页验证了浅色蓝、深色紫主题，以及下载列表暂停后保留 62% 并隐藏旧速度；未操作用户真实任务。当前 B 站页面需重载新版后确认，证据见 `dist/download-progress-0.44.1-verification.json`。
 
@@ -99,7 +101,7 @@ npm run build:helper -- -StageOnly
 
 ## 当前手动验收入口
 
-本机助手保持 0.2.6，复用原系统 Node。个人维护发布版扩展为 0.44.3；推荐 ZIP 解压后加载，当前 CRX 的直接安装启用仍未通过验收。其他机器安装 MSIX 后，从开始菜单打开一次；缺 Node 时使用本地窗口安装。此前下载功能验收记录保留，播放优化的慢网实测继续延后。
+本机助手保持 0.2.7，复用原系统 Node。个人维护发布版扩展为 0.44.4；推荐 ZIP 解压后加载，当前 CRX 的直接安装启用仍未通过验收。其他机器安装 MSIX 后，从开始菜单打开一次；缺 Node 时使用本地窗口安装。此前下载功能验收记录保留，播放优化的慢网实测继续延后。
 
 自动浏览器工具只允许 HTTP / HTTPS，已拒绝访问 edge://extensions，不能代替用户操作扩展管理页。递归替换旧生成目录的操作也被自动审批拒绝；随后采用逐文件备份与更新，更新了 54 个生成文件，没有删除原目录。
 

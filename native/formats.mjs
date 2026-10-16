@@ -57,7 +57,7 @@ export function renderTemplate(template, task, streams = {}) {
   const videoQuality = streams.video?.quality || task.options.quality
   const qualityLabels = { 16: '360P', 32: '480P', 64: '720P', 74: '720P 高帧', 80: '1080P', 112: '1080P 高码', 116: '1080P 高帧', 120: '4K', 125: 'HDR', 126: '杜比', 127: '8K' }
   const audioLabels = { 30216: '64K', 30232: '132K', 30280: '192K', 30250: '杜比全景声', 30251: 'Hi-Res无损' }
-  const values = { title, part: task.part || task.title, upnn: task.author || '', uid: task.uid || '', bv: task.bvid, cid: task.cid, index, v: '0.2.6',
+  const values = { title, part: task.part || task.title, upnn: task.author || '', uid: task.uid || '', bv: task.bvid, cid: task.cid, index, v: '0.2.7',
     aqn: [audioLabels[streams.audio?.id || audioIds[task.options.audioQuality]] || 'auto', (streams.audio?.codecs || '').split('.')[0]].filter(Boolean).join(' '),
     vqn: [qualityLabels[videoQuality] || 'auto', ({ 7: 'avc1', 12: 'hev1', 13: 'av01' })[streams.video?.codec] || task.options.codec].filter(Boolean).join(' '), collection: task.group?.title || '',
     vtype: task.group ? '合集视频' : task.pageCount > 1 ? '分集视频' : '单视频',
