@@ -1,4 +1,5 @@
 const values = {}
+const recommend = page => ({ code: 0, data: { item: Array.from({ length: 30 }, (_, index) => ({ id: (page - 1) * 30 + index + 1, bvid: 'BV' + String((page - 1) * 30 + index + 1).padStart(10, '0'), title: `加载性能验收 · 示例视频 ${String((page - 1) * 30 + index + 1).padStart(2, '0')}`, pic: 'https://i2.hdslb.com/bfs/archive/1ada8c32a9d168e4b2ee3e010f24789ba3353785.jpg', duration: 180, owner: { name: '示例 UP 主', face: 'https://i2.hdslb.com/bfs/archive/1ada8c32a9d168e4b2ee3e010f24789ba3353785.jpg', mid: 12345 }, stat: { view: 12345, danmaku: 123 }, pubdate: 1792108800, cid: 42 })) } })
 export const storage = { local: { async get(key) { return { [key]: values[key] } }, async set(data) { Object.assign(values, data) }, async remove(key) { delete values[key] } }, onChanged: { addListener() {}, removeListener() {} } }
 let installed = true
 let playbackEnabled = false
@@ -25,7 +26,15 @@ export default {
   storage,
   runtime: {
     getURL(path) { return '/' + path },
-    async sendMessage({ method, params, bewlyPlayback }) {
+    async sendMessage({ method, params, bewlyPlayback, bewlyResource, contentScriptQuery, ...rest }) {
+      if (bewlyResource) {
+        if (method === 'cancel') return { ok: true }
+        await new Promise(resolve => setTimeout(resolve, 120))
+        if (method === 'getRecommendVideos') return { ok: true, result: structuredClone(recommend(params.fresh_idx || 1)) }
+        if (method === 'getVideoInfo') return { ok: true, result: { code: 0, data: { cid: 42 } } }
+        return { ok: true, result: { code: 0, data: { durl: [] } } }
+      }
+      if (contentScriptQuery === 'getRecommendVideos') return structuredClone(recommend(rest.fresh_idx || 1))
       if (bewlyPlayback) {
         if (method === 'enable') playbackEnabled = true
         if (method === 'disable') playbackEnabled = false

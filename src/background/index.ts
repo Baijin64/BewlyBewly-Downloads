@@ -1,6 +1,7 @@
 import browser from 'webextension-polyfill'
 
 import { setupDownloadMessages } from './download'
+import { setupLoadingMessages } from './loading'
 import { setupApiMsgLstnrs } from './messageListeners/api'
 import { setupTabMsgLstnrs } from './messageListeners/tabs'
 import { setupPlaybackMessages } from './playback'
@@ -46,4 +47,5 @@ if (process.env.FIREFOX) {
 setupApiMsgLstnrs()
 setupTabMsgLstnrs()
 setupDownloadMessages()
+setupLoadingMessages()
 setupPlaybackMessages()

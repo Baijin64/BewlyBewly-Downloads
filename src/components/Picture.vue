@@ -13,6 +13,7 @@ defineProps<{
     <img
       :src="src"
       :loading="loading"
+      decoding="async"
       :alt="alt"
       block w-full h-full object="[inherit]" aspect-inherit
       rounded-inherit

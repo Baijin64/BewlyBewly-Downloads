@@ -5,9 +5,12 @@ import { useToast } from 'vue-toastification'
 
 import Button from '~/components/Button.vue'
 import { useBewlyApp } from '~/composables/useAppProvider'
+import { previewExpiry } from '~/loading/broker'
+import { loadingRequest } from '~/loading/client'
 import { accessKey, settings } from '~/logic'
 import type { VideoInfo } from '~/models/video/videoInfo'
 import type { VideoPreviewResult } from '~/models/video/videoPreview'
+import { trustedMedia } from '~/playback/engine'
 import { useMainStore } from '~/stores/mainStore'
 import api from '~/utils/api'
 import { getTvSign, TVAppKey } from '~/utils/authProvider'
@@ -26,6 +29,7 @@ const props = withDefaults(defineProps<Props>(), {
   showWatcherLater: true,
   type: 'common',
   moreBtn: true,
+  coverLoading: 'lazy',
 })
 
 interface Props {
@@ -37,6 +41,7 @@ interface Props {
   horizontal?: boolean
   showPreview?: boolean
   moreBtn?: boolean
+  coverLoading?: 'eager' | 'lazy'
 }
 
 const toast = useToast()
@@ -79,33 +84,58 @@ const previewVideoUrl = ref<string>('')
 const contentVisibility = ref<'auto' | 'visible'>('auto')
 const videoElement = ref<HTMLVideoElement | null>(null)
 
-watch(() => isHover.value, async (newValue) => {
-  if (!props.video || !newValue)
+let previewController: AbortController | undefined
+let previewIdentity = ''
+let previewExpires = 0
+watch([isHover, () => props.video, () => props.showPreview, () => settings.value.enableVideoPreview], async () => {
+  previewController?.abort()
+  const video = props.video
+  const identity = `${video?.bvid || video?.aid}:${video?.cid}`
+  if (identity !== previewIdentity || Date.now() >= previewExpires)
+    previewVideoUrl.value = ''
+  previewIdentity = identity
+  if (!isHover.value || !video || !props.showPreview || !settings.value.enableVideoPreview || previewVideoUrl.value || !(video.aid || video.bvid))
     return
-
-  if (props.showPreview && settings.value.enableVideoPreview
-    && !previewVideoUrl.value && (props.video.aid || props.video.bvid)) {
-    let cid = props.video.cid
+  const controller = new AbortController()
+  previewController = controller
+  try {
+    let cid = video.cid
     if (!cid) {
-      try {
-        const res: VideoInfo = await api.video.getVideoInfo({
-          bvid: props.video.bvid,
-        })
-        if (res.code === 0)
-          cid = res.data.cid
-      }
-      catch {
-
-      }
+      const info = await loadingRequest<VideoInfo>('getVideoInfo', { ...(video.bvid ? { bvid: video.bvid } : { aid: video.aid }) }, controller.signal)
+      if (info.code !== 0)
+        return
+      cid = info.data.cid
     }
-    api.video.getVideoPreview({
-      bvid: props.video.bvid,
-      cid,
-    }).then((res: VideoPreviewResult) => {
-      if (res.code === 0)
-        previewVideoUrl.value = res.data.durl[0].url
-    })
+    if (controller.signal.aborted || !cid)
+      return
+    const result = await loadingRequest<VideoPreviewResult>('getVideoPreview', { ...(video.bvid ? { bvid: video.bvid } : { aid: video.aid }), cid }, controller.signal)
+    if (controller.signal.aborted || !isHover.value || result.code !== 0 || !result.data?.durl?.[0]?.url)
+      return
+    const url = trustedMedia(result.data.durl[0].url)
+    previewExpires = previewExpiry(url, Date.now())
+    if (previewExpires > Date.now())
+      previewVideoUrl.value = url
   }
+  catch { /* Preview failure leaves the cover and normal video link usable. */ }
+})
+
+function stopPreview() {
+  contentVisibility.value = 'auto'
+  clearTimeout(mouseEnterTimeOut.value)
+  clearTimeout(mouseLeaveTimeOut.value)
+  mouseEnterTimeOut.value = undefined
+  isHover.value = false
+  previewController?.abort()
+}
+function visibilityChanged() {
+  if (document.hidden)
+    stopPreview()
+}
+onMounted(() => document.addEventListener('visibilitychange', visibilityChanged))
+onDeactivated(stopPreview)
+onBeforeUnmount(() => {
+  stopPreview()
+  document.removeEventListener('visibilitychange', visibilityChanged)
 })
 
 function toggleWatchLater() {
@@ -143,15 +173,19 @@ function handleMouseEnter() {
 
   // fix #789
   contentVisibility.value = 'visible'
+  if (isHover.value || mouseEnterTimeOut.value)
+    return
   if (settings.value.hoverVideoCardDelayed) {
     mouseEnterTimeOut.value = setTimeout(() => {
       isHover.value = true
+      mouseEnterTimeOut.value = undefined
       clearTimeout(mouseLeaveTimeOut.value)
     }, 1200)
   }
   else {
     mouseEnterTimeOut.value = setTimeout(() => {
       isHover.value = true
+      mouseEnterTimeOut.value = undefined
       clearTimeout(mouseLeaveTimeOut.value)
     }, 500)
   }
@@ -159,9 +193,7 @@ function handleMouseEnter() {
 
 function handelMouseLeave() {
   contentVisibility.value = 'auto'
-  isHover.value = false
-  clearTimeout(mouseEnterTimeOut.value)
-  clearTimeout(mouseLeaveTimeOut.value)
+  stopPreview()
 }
 
 function handleClick(event: MouseEvent) {
@@ -274,7 +306,7 @@ provide('getVideoType', () => props.type!)
             <!-- Video cover -->
             <Picture
               :src="`${removeHttpFromUrl(video.cover)}@672w_378h_1c_!web-home-common-cover`"
-              loading="eager"
+              :loading="coverLoading"
               w="full" max-w-full align-middle aspect-video object-cover
               rounded="$bew-radius"
             />

@@ -1,12 +1,19 @@
-import { createApp } from 'vue'
+import { createApp, defineComponent, h } from 'vue'
 import { createPinia } from 'pinia'
-import { createI18n } from 'vue-i18n'
 
 import Button from '../../../src/components/Button.vue'
 import Input from '../../../src/components/Input.vue'
 import Radio from '../../../src/components/Radio.vue'
 import Select from '../../../src/components/Select.vue'
+import ALink from '../../../src/components/ALink.vue'
+import Picture from '../../../src/components/Picture.vue'
+import Tooltip from '../../../src/components/Tooltip.vue'
+import Loading from '../../../src/components/Loading.vue'
+import Empty from '../../../src/components/Empty.vue'
+import VideoCard from '../../../src/components/VideoCard/VideoCard.vue'
+import Toast from 'vue-toastification'
 import Preview from './Preview.vue'
+import { i18n } from '../../../src/utils/i18n'
 
 import 'uno.css'
 import '../../../src/styles/reset.css'
@@ -15,9 +22,22 @@ import '../../../src/styles/main.scss'
 
 const app = createApp(Preview)
 app.use(createPinia())
-app.use(createI18n({ legacy: false, locale: 'cmn-CN', missingWarn: false, fallbackWarn: false, messages: { 'cmn-CN': { dock: { home: '首页', search: '搜索', anime: '番剧', favorites: '收藏', history: '历史', watch_later: '稍后再看', moments: '动态', downloads: '下载器', settings: '设置', dark_mode: '深色', light_mode: '浅色' }, common: { confirm: '确认', cancel: '取消' } } } }))
+app.use(Toast)
+i18n.global.locale.value = 'cmn-CN'
+app.use(i18n)
 app.component('Button', Button)
 app.component('Input', Input)
 app.component('Radio', Radio)
 app.component('Select', Select)
+app.component('ALink', ALink)
+// The production page is HTTPS; the local HTTP harness must keep CDN images HTTPS.
+app.component('Picture', defineComponent({
+  inheritAttrs: false,
+  props: ['src', 'loading', 'alt'],
+  setup: (props, { attrs }) => () => h(Picture, { ...attrs, ...props, src: props.src?.replace(/^\/\//, 'https://') }),
+}))
+app.component('Tooltip', Tooltip)
+app.component('Loading', Loading)
+app.component('Empty', Empty)
+app.component('VideoCard', VideoCard)
 app.mount('#app')

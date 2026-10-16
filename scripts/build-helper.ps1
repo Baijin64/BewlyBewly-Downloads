@@ -6,8 +6,18 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $BinDirectory) {
-    $BinDirectory = $env:BEWLY_BILIDOWN_BIN
-    if (-not $BinDirectory) { $BinDirectory = Join-Path (Split-Path -Parent $projectRoot) 'Dev\Bilidown\resources\bin' }
+    $BinDirectory = $env:BEWLY_MEDIA_BIN
+    if (-not $BinDirectory) { $BinDirectory = $env:BEWLY_BILIDOWN_BIN }
+    if (-not $BinDirectory) {
+        foreach ($cachedBin in @('dist\toolchain\bin','dist\private-build-deps\bin')) {
+            $candidateBin = Join-Path $projectRoot $cachedBin
+            if ((Test-Path -LiteralPath (Join-Path $candidateBin 'ffmpeg.exe')) -and (Test-Path -LiteralPath (Join-Path $candidateBin 'aria2c.exe'))) {
+                $BinDirectory = $candidateBin
+                break
+            }
+        }
+    }
+    if (-not $BinDirectory) { throw 'Fetch the pinned media toolchain using docs/BUILD-DOWNLOADS.md, or pass -BinDirectory.' }
 }
 $BinDirectory = (Resolve-Path -LiteralPath $BinDirectory).Path
 foreach ($binary in @('aria2c.exe','ffmpeg.exe')) {

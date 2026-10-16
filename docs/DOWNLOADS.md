@@ -4,7 +4,9 @@
 
 ## 当前状态
 
-当前个人维护测试版为扩展 **0.44.4**、助手 **0.2.7**（协议 2）。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。Chrome ZIP 为 `dist/BewlyBewly-Downloads-0.44.4-Chrome.zip`，另提供签名 CRX 和连接器 MSIX。安装步骤见 [安装说明](INSTALL-DOWNLOADS.md)。
+0.44.5 完成保持原 UI 的推荐加载与预览缓存优化：限制补页、取消旧请求、短时缓存、稳定卡片属性与延后加载离屏图片。助手继续使用 0.2.7；详情见 [加载优化与验证](LOADING-OPTIMIZATION.md)。离线观看继续采用下载 MP4 后使用系统播放器。
+
+当前个人维护测试版为扩展 **0.44.5**、助手 **0.2.7**（协议 2）。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。Chrome ZIP 为 `dist/BewlyBewly-Downloads-0.44.5-Chrome.zip`，另提供签名 CRX 和连接器 MSIX。安装步骤见 [安装说明](INSTALL-DOWNLOADS.md)。
 
 感谢 [BewlyBewly 原项目](https://github.com/BewlyBewly/BewlyBewly) 与 [Bilidown 原作者王子周棋洛](https://zhouql.vip/)。本分支独立维护，不代表原作者继续更新。浏览器扩展更新后需要重载；连接器配置和任务继续使用原本机数据目录。
 
@@ -101,7 +103,7 @@ npm run build:helper -- -StageOnly
 
 ## 当前手动验收入口
 
-本机助手保持 0.2.7，复用原系统 Node。个人维护发布版扩展为 0.44.4；推荐 ZIP 解压后加载，当前 CRX 的直接安装启用仍未通过验收。其他机器安装 MSIX 后，从开始菜单打开一次；缺 Node 时使用本地窗口安装。此前下载功能验收记录保留，播放优化的慢网实测继续延后。
+本机助手保持 0.2.7，复用原系统 Node。个人维护发布版扩展为 0.44.5；推荐 ZIP 解压后加载，当前 CRX 的直接安装启用仍未通过验收。其他机器安装 MSIX 后，从开始菜单打开一次；缺 Node 时使用本地窗口安装。此前下载功能验收记录保留，播放优化的慢网实测继续延后。
 
 自动浏览器工具只允许 HTTP / HTTPS，已拒绝访问 edge://extensions，不能代替用户操作扩展管理页。递归替换旧生成目录的操作也被自动审批拒绝；随后采用逐文件备份与更新，更新了 54 个生成文件，没有删除原目录。
 

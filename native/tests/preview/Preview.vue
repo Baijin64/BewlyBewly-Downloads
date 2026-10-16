@@ -8,11 +8,13 @@ import { openVideoDownload } from '../../../src/download/state'
 import { AppPage } from '../../../src/enums/appEnums'
 import { setInstalled } from './browser.mjs'
 import ProgressPreview from './ProgressPreview.vue'
+import PerformancePreview from './PerformancePreview.vue'
 
 const root = ref<HTMLElement>()
 const dark = ref(false)
 const narrow = ref(false)
 const progressOnly = new URLSearchParams(location.search).has('progress')
+const performanceOnly = new URLSearchParams(location.search).has('performance')
 const themeColor = ref('#00A1D6')
 watch(themeColor, value => document.documentElement.style.setProperty('--bew-theme-color', value), { immediate: true })
 document.documentElement.classList.add('bewly-design')
@@ -30,7 +32,8 @@ provide('BEWLY_APP', { mainAppRef: root, reachTop: ref(true), handlePageRefresh:
       <Button size="small" @click="setInstalled(false); openVideoDownload('BV1GJ411x7h7')">模拟断开</Button>
       <Button size="small" @click="setInstalled(true)">恢复连接</Button>
     </div>
-    <ProgressPreview v-if="progressOnly" />
+    <PerformancePreview v-if="performanceOnly" />
+    <ProgressPreview v-else-if="progressOnly" />
     <template v-else>
       <DownloaderPage />
       <Dock :activated-page="AppPage.Downloads" />

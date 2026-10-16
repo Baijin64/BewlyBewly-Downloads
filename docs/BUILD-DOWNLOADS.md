@@ -36,6 +36,8 @@ node scripts/pack-chrome-zip.mjs dist/release-extension
 
 安装 Windows SDK，准备与 native/toolchain.json 对应的 aria2c.exe 和 ffmpeg.exe。仓库不包含 Node 运行时、媒体 EXE 或用户配置。
 
+本机默认复用 `dist/toolchain/bin` 或 `dist/private-build-deps/bin` 的独立工具链缓存，也可指定 `BEWLY_MEDIA_BIN`。不再依赖旧 Bilidown 的安装目录，旧程序删除后仍可构建。
+
 有仓库权限并已登录 GitHub CLI 时，可获取固定测试工具链：
 
 ```powershell

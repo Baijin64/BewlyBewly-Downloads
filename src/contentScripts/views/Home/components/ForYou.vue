@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import { onKeyStroke } from '@vueuse/core'
 import type { Ref } from 'vue'
+import { useToast } from 'vue-toastification'
 
 import { useBewlyApp } from '~/composables/useAppProvider'
 import { FilterType, useFilter } from '~/composables/useFilter'
 import { LanguageType } from '~/enums/appEnums'
+import { abortError } from '~/loading/broker'
+import type { RecommendationCard } from '~/loading/cards'
+import { appCard, webCard } from '~/loading/cards'
+import { loadingRequest } from '~/loading/client'
+import { FeedLoader } from '~/loading/feed'
 import type { GridLayoutType } from '~/logic'
 import { accessKey, settings } from '~/logic'
 import type { AppForYouResult, Item as AppVideoItem } from '~/models/video/appForYou'
 import { Type as ThreePointV2Type } from '~/models/video/appForYou'
-import type { forYouResult, Item as VideoItem } from '~/models/video/forYou'
-import api from '~/utils/api'
+import type { forYouResult } from '~/models/video/forYou'
 import { TVAppKey } from '~/utils/authProvider'
-import { isVerticalVideo } from '~/utils/uriParse'
 
 const props = defineProps<{
   gridLayout: GridLayoutType
@@ -34,17 +38,6 @@ const appFilterFunc = useFilter(
   [['uri'], ['player_args', 'duration'], ['cover_left_text_1'], ['title'], ['mask', 'avatar', 'text'], ['mask', 'avatar', 'up_id']],
 )
 
-// https://github.com/starknt/BewlyBewly/blob/fad999c2e482095dc3840bb291af53d15ff44130/src/contentScripts/views/Home/components/ForYou.vue#L16
-interface VideoElement {
-  uniqueId: string
-  item?: VideoItem
-}
-
-interface AppVideoElement {
-  uniqueId: string
-  item?: AppVideoItem
-}
-
 const gridClass = computed((): string => {
   if (props.gridLayout === 'adaptive')
     return 'grid-adaptive'
@@ -53,12 +46,11 @@ const gridClass = computed((): string => {
   return 'grid-one-column'
 })
 
-const videoList = ref<VideoElement[]>([])
-const appVideoList = ref<AppVideoElement[]>([])
+const videoList = shallowRef<RecommendationCard[]>([])
+const appVideoList = shallowRef<RecommendationCard[]>([])
 const isLoading = ref<boolean>(false)
 const needToLoginFirst = ref<boolean>(false)
 const containerRef = ref<HTMLElement>() as Ref<HTMLElement>
-const refreshIdx = ref<number>(1)
 const noMoreContent = ref<boolean>(false)
 const { handleReachBottom, handlePageRefresh, haveScrollbar } = useBewlyApp()
 const activatedAppVideo = ref<AppVideoItem | null>()
@@ -93,225 +85,138 @@ onKeyStroke((e: KeyboardEvent) => {
   }
 })
 
-watch(() => settings.value.recommendationMode, () => {
-  initData()
-})
-
-onMounted(() => {
-  // Delay by 0.2 seconds to obtain the `settings.value.recommendationMode` value
-  // otherwise the `settings.value.recommendationMode` value will be undefined
-  // i have no idea to fix that...
-  setTimeout(() => {
-    initData()
-  }, 200)
-
-  initPageAction()
-})
-
-onActivated(() => {
-  initPageAction()
-})
-
-async function initData() {
-  videoList.value.length = 0
-  appVideoList.value.length = 0
-  await getData()
-}
-
-async function getData() {
-  emit('beforeLoading')
-  isLoading.value = true
-  try {
-    if (settings.value.recommendationMode === 'web') {
-      await getRecommendVideos()
+const toast = useToast()
+let activeMode: 'web' | 'app' = 'web'
+let placeholderTarget = 0
+let sequence = 0
+let initialized = false
+let mounted = false
+let initialTimer: ReturnType<typeof setTimeout> | undefined
+const loader = new FeedLoader<RecommendationCard>({
+  key: item => item.uniqueId,
+  changed: () => {
+    const list = activeMode === 'web' ? videoList : appVideoList
+    list.value = [...loader.items, ...Array.from({ length: loader.loading ? Math.max(0, placeholderTarget - loader.items.length) : 0 }, (_, index) => ({ uniqueId: `pending-${sequence}-${index}` }))]
+    noMoreContent.value = loader.done
+    if (isLoading.value !== loader.loading) {
+      isLoading.value = loader.loading
+      if (loader.loading)
+        emit('beforeLoading')
+      else emit('afterLoading')
     }
-    else {
-      for (let i = 0; i < 3; i++)
-        await getAppRecommendVideos()
-    }
-  }
-  finally {
-    isLoading.value = false
-    emit('afterLoading')
-  }
-}
-
-function initPageAction() {
-  handleReachBottom.value = async () => {
-    if (isLoading.value)
-      return
-    if (noMoreContent.value)
-      return
-
-    getData()
-  }
-
-  handlePageRefresh.value = async () => {
-    if (isLoading.value)
-      return
-
-    initData()
-  }
-}
-
-async function getRecommendVideos() {
-  try {
-    let i = 0
-    if (!filterFunc.value || (videoList.value.length < PAGE_SIZE && filterFunc.value)) {
-      const pendingVideos: VideoElement[] = Array.from({
-        length: videoList.value.length < PAGE_SIZE ? PAGE_SIZE - videoList.value.length : PAGE_SIZE,
-      }, () => ({
-        uniqueId: `unique-id-${(videoList.value.length || 0) + i++})}`,
-      } satisfies VideoElement))
-
-      videoList.value.push(...pendingVideos)
-    }
-
-    const response: forYouResult = await api.video.getRecommendVideos({
-      fresh_idx: refreshIdx.value++,
-      ps: PAGE_SIZE,
-    })
-
-    if (!response.data) {
-      noMoreContent.value = true
-      return
-    }
-
-    if (response.code === 0) {
-      const resData = [] as VideoItem[]
-
-      response.data.item.forEach((item: VideoItem) => {
-        if (!filterFunc.value || filterFunc.value(item))
-          resData.push(item)
-      })
-
-      // when videoList has length property, it means it is the first time to load
-      if (!videoList.value.length) {
-        videoList.value = resData.map(item => ({ uniqueId: `${item.id}`, item }))
+  },
+  error: () => toast.error('推荐加载失败，可点击刷新重试。'),
+  page: async (cursor, signal) => {
+    const mode = activeMode
+    if (mode === 'web') {
+      const response = await loadingRequest<forYouResult>('getRecommendVideos', { fresh_idx: cursor, ps: PAGE_SIZE }, signal)
+      if (signal.aborted)
+        throw abortError()
+      if (response.code === 62011) {
+        needToLoginFirst.value = true
+        return { items: [], next: cursor, done: true }
       }
-      else {
-        resData.forEach((item) => {
-          // If the `filterFunc` is unset, indicating that the user hasn't specified the filter,
-          // skep the `findFirstEmptyItemIndex` check to enhance the performance
-          if (!filterFunc.value) {
-            videoList.value.push({
-              uniqueId: `${item.id}`,
-              item,
-            })
-          }
-          else {
-            const findFirstEmptyItemIndex = videoList.value.findIndex(video => !video.item)
-            if (findFirstEmptyItemIndex !== -1) {
-              videoList.value[findFirstEmptyItemIndex] = {
-                uniqueId: `${item.id}`,
-                item,
-              }
-            }
-            else {
-              videoList.value.push({
-                uniqueId: `${item.id}`,
-                item,
-              })
-            }
-          }
-        })
-      }
+      if (response.code !== 0)
+        throw new Error('推荐加载失败')
+      const raw = response.data?.item || []
+      return { items: raw.filter(item => !filterFunc.value || filterFunc.value(item)).map(webCard), next: cursor + 1, done: raw.length === 0 }
     }
-    else if (response.code === 62011) {
-      needToLoginFirst.value = true
-    }
-  }
-  finally {
-    const filledItems = videoList.value.filter(video => video.item)
-    videoList.value = filledItems
-
-    if (!needToLoginFirst.value) {
-      await nextTick()
-      if (!await haveScrollbar() || filledItems.length < PAGE_SIZE || filledItems.length < 1) {
-        getRecommendVideos()
-      }
-    }
-  }
-}
-
-async function getAppRecommendVideos() {
-  try {
-    let i = 0
-    if (!appFilterFunc.value || (appVideoList.value.length < PAGE_SIZE && appFilterFunc.value)) {
-      const pendingVideos: AppVideoElement[] = Array.from({
-        length: appVideoList.value.length < PAGE_SIZE ? PAGE_SIZE - appVideoList.value.length : PAGE_SIZE,
-      }, () => ({
-        uniqueId: `unique-id-${(appVideoList.value.length || 0) + i++})}`,
-      } satisfies AppVideoElement))
-
-      appVideoList.value.push(...pendingVideos)
-    }
-
-    const response: AppForYouResult = await api.video.getAppRecommendVideos({
+    const locale = [LanguageType.Mandarin_TW, LanguageType.Cantonese].includes(settings.value.language as LanguageType) ? 'zh-Hant_TW' : 'zh-Hans_CN'
+    const response = await loadingRequest<AppForYouResult>('getAppRecommendVideos', {
       access_key: accessKey.value,
-      s_locale: settings.value.language === LanguageType.Mandarin_TW || settings.value.language === LanguageType.Cantonese ? 'zh-Hant_TW' : 'zh-Hans_CN',
-      c_locate: settings.value.language === LanguageType.Mandarin_TW || settings.value.language === LanguageType.Cantonese ? 'zh-Hant_TW' : 'zh-Hans_CN',
+      s_locale: locale,
+      c_locate: locale,
       appkey: TVAppKey.appkey,
-      idx: appVideoList.value.length > 0 ? appVideoList.value[appVideoList.value.length - 1].item?.idx : 1,
-    })
-
-    if (response.code === 0) {
-      const resData = [] as AppVideoItem[]
-
-      response.data.items.forEach((item: AppVideoItem) => {
-        // Remove banner & ad cards
-        if (!item.card_type.includes('banner') && item.card_type !== 'cm_v1' && (!appFilterFunc.value || appFilterFunc.value(item)))
-          resData.push(item)
-      })
-
-      // when videoList has length property, it means it is the first time to load
-      if (!appVideoList.value.length) {
-        appVideoList.value = resData.map(item => ({ uniqueId: `${item.idx}`, item }))
-      }
-      else {
-        resData.forEach((item) => {
-          // If the `appFilterFunc` is unset, indicating that the user hasn't specified the filter,
-          // skep the `findFirstEmptyItemIndex` check to enhance the performance
-          if (!appFilterFunc.value) {
-            appVideoList.value.push({
-              uniqueId: `${item.idx}`,
-              item,
-            })
-          }
-          else {
-            const findFirstEmptyItemIndex = appVideoList.value.findIndex(video => !video.item)
-            if (findFirstEmptyItemIndex !== -1) {
-              appVideoList.value[findFirstEmptyItemIndex] = {
-                uniqueId: `${item.idx}`,
-                item,
-              }
-            }
-            else {
-              appVideoList.value.push({
-                uniqueId: `${item.idx}`,
-                item,
-              })
-            }
-          }
-        })
-      }
-    }
-    else if (response.code === 62011) {
+      idx: cursor,
+    }, signal)
+    if (signal.aborted)
+      throw abortError()
+    if (response.code === 62011) {
       needToLoginFirst.value = true
+      return { items: [], next: cursor, done: true }
     }
-  }
-  finally {
-    const filledItems = appVideoList.value.filter(video => video.item)
-    appVideoList.value = filledItems
+    if (response.code !== 0)
+      throw new Error('推荐加载失败')
+    const raw = response.data?.items || []
+    return {
+      items: raw.filter(item => !item.card_type.includes('banner') && item.card_type !== 'cm_v1' && (!appFilterFunc.value || appFilterFunc.value(item))).map(appCard),
+      next: raw.at(-1)?.idx ?? cursor,
+      done: raw.length === 0,
+    }
+  },
+})
 
-    if (!needToLoginFirst.value) {
-      await nextTick()
-      if (!await haveScrollbar() || filledItems.length < PAGE_SIZE || filledItems.length < 1) {
-        getAppRecommendVideos()
-      }
-    }
+function initData() {
+  clearTimeout(initialTimer)
+  initialTimer = undefined
+  loader.reset()
+  activeMode = settings.value.recommendationMode || 'web'
+  videoList.value = []
+  appVideoList.value = []
+  needToLoginFirst.value = false
+  initialized = true
+  if (document.hidden) {
+    loader.pause()
+    return Promise.resolve()
+  }
+  return getData()
+}
+function getData() {
+  if (!loader.loading) {
+    sequence++
+    const filtered = activeMode === 'web' ? filterFunc.value : appFilterFunc.value
+    placeholderTarget = filtered && loader.items.length >= PAGE_SIZE ? loader.items.length : Math.max(PAGE_SIZE, loader.items.length + PAGE_SIZE)
+  }
+  return loader.load({ minPages: activeMode === 'app' ? 3 : 1, maxPages: 3, target: PAGE_SIZE, needsMore: async () => !await haveScrollbar() })
+}
+function initPageAction() {
+  handleReachBottom.value = getData
+  handlePageRefresh.value = initData
+}
+function visibilityChanged() {
+  if (document.hidden) {
+    loader.pause()
+  }
+  else if (mounted) {
+    loader.resume()
+    if (!loader.items.length && initialized)
+      getData()
   }
 }
+watch(() => settings.value.recommendationMode, () => {
+  if (mounted)
+    initData()
+})
+onMounted(() => {
+  mounted = true
+  // Keep the existing initial settings-read delay, but own and cancel the timer.
+  initialTimer = setTimeout(initData, 200)
+  initPageAction()
+  document.addEventListener('visibilitychange', visibilityChanged)
+})
+onActivated(() => {
+  mounted = true
+  loader.resume()
+  initPageAction()
+  if (!initialTimer) {
+    if (!initialized || activeMode !== settings.value.recommendationMode)
+      initData()
+    else if (!loader.items.length)
+      getData()
+  }
+})
+onDeactivated(() => {
+  mounted = false
+  clearTimeout(initialTimer)
+  initialTimer = undefined
+  loader.pause()
+})
+onBeforeUnmount(() => {
+  mounted = false
+  clearTimeout(initialTimer)
+  loader.pause()
+  document.removeEventListener('visibilitychange', visibilityChanged)
+})
 
 function jumpToLoginPage() {
   location.href = 'https://passport.bilibili.com/login'
@@ -336,27 +241,13 @@ defineExpose({ initData })
     >
       <template v-if="settings.recommendationMode === 'web'">
         <VideoCard
-          v-for="video in videoList"
+          v-for="(video, index) in videoList"
           :key="video.uniqueId"
-          :skeleton="!video.item"
+          v-memo="[video, gridLayout]"
+          :cover-loading="index < 10 ? 'eager' : 'lazy'"
+          :skeleton="!video.video"
           type="rcmd"
-          :video="video.item ? {
-            id: video.item.id,
-            duration: video.item.duration,
-            title: video.item.title,
-            cover: video.item.pic,
-            author: {
-              name: video.item.owner.name,
-              authorFace: video.item.owner.face,
-              followed: !!video.item.is_followed,
-              mid: video.item.owner.mid,
-            },
-            view: video.item.stat.view,
-            danmaku: video.item.stat.danmaku,
-            publishedTimestamp: video.item.pubdate,
-            bvid: video.item.bvid,
-            cid: video.item.cid,
-          } : undefined"
+          :video="video.video"
           show-preview
           :horizontal="gridLayout !== 'adaptive'"
           more-btn
@@ -364,32 +255,14 @@ defineExpose({ initData })
       </template>
       <template v-else>
         <VideoCard
-          v-for="video in appVideoList"
+          v-for="(video, index) in appVideoList"
           :key="video.uniqueId"
           ref="videoCardRef"
-          :skeleton="!video.item"
+          v-memo="[video, gridLayout]"
+          :cover-loading="index < 10 ? 'eager' : 'lazy'"
+          :skeleton="!video.video"
           type="appRcmd"
-          :video="video.item ? {
-            id: video.item.args.aid ?? 0,
-            durationStr: video.item.cover_right_text,
-            title: `${video.item.title}`,
-            cover: `${video.item.cover}`,
-            author: {
-              name: video.item?.mask?.avatar.text,
-              authorFace: video.item?.mask?.avatar.cover || video.item?.avatar?.cover,
-              followed: video.item?.bottom_rcmd_reason === '已关注' || video.item?.bottom_rcmd_reason === '已關注',
-              mid: video.item?.mask?.avatar.up_id,
-            },
-            capsuleText: video.item?.desc?.split('·')[1],
-            bvid: video.item.bvid,
-            viewStr: video.item.cover_left_text_1,
-            danmakuStr: video.item.cover_left_text_2,
-            cid: video.item?.player_args?.cid,
-            goto: video.item?.goto,
-            url: video.item?.goto === 'bangumi' ? video.item.uri : '',
-            type: video.item.card_goto === 'bangumi' ? 'bangumi' : isVerticalVideo(video.item.uri!) ? 'vertical' : 'horizontal',
-            threePointV2: video.item?.three_point_v2,
-          } : undefined"
+          :video="video.video"
           show-preview
           :horizontal="gridLayout !== 'adaptive'"
           more-btn
