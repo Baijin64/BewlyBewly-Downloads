@@ -391,6 +391,7 @@ topbar:
     manager: 內容管理
 
 dock:
+  downloads: 下載器
   search: 搵嘢
   home: 主頁
   anime: 動畫

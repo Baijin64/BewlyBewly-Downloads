@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 import { useBewlyApp } from '~/composables/useAppProvider'
 import { useDark } from '~/composables/useDark'
 import { useDelayedHover } from '~/composables/useDelayedHover'
+import { downloadTaskCount } from '~/download/state'
 import { AppPage } from '~/enums/appEnums'
 import { settings } from '~/logic'
 import type { DockItem } from '~/stores/mainStore'
@@ -97,27 +98,30 @@ function computeDockItem(): DockItem[] {
       }))
   }
 
-  if (Array.isArray(settings.value.dockItemsConfig) && settings.value.dockItemsConfig.length < mainStore.dockItems.length) {
-    // Add missing items to dockItemsConfig
-    const missingItems = mainStore.dockItems.filter(dock => !settings.value.dockItemsConfig.some(item => item.page === dock.page))
-    settings.value.dockItemsConfig = [
-      ...settings.value.dockItemsConfig,
-      ...missingItems.map(dock => ({ page: dock.page, visible: true, openInNewTab: false, useOriginalBiliPage: false })),
-    ]
+  // Merge built-ins by identity instead of resetting the user's order and visibility.
+  const configured = Array.isArray(settings.value.dockItemsConfig) ? settings.value.dockItemsConfig : []
+  const seen = new Set<AppPage>()
+  const merged = configured.filter((item) => {
+    if (seen.has(item.page) || !mainStore.dockItems.some(dock => dock.page === item.page))
+      return false
+    seen.add(item.page)
+    return true
+  })
+  for (const dock of mainStore.dockItems) {
+    if (!seen.has(dock.page))
+      merged.push({ page: dock.page, visible: true, openInNewTab: false, useOriginalBiliPage: false })
   }
-  // if dockItemVisibilityList not fresh , set it to default
-  else if (!Array.isArray(settings.value.dockItemsConfig) || settings.value.dockItemsConfig.length !== mainStore.dockItems.length) {
-    settings.value.dockItemsConfig = mainStore.dockItems.map(dock =>
-      ({ page: dock.page, visible: true, openInNewTab: false, useOriginalBiliPage: false }),
-    )
-  }
+  if (JSON.stringify(merged) !== JSON.stringify(settings.value.dockItemsConfig))
+    settings.value.dockItemsConfig = merged
 
   const targetDockItems: DockItem[] = []
 
   settings.value.dockItemsConfig.forEach((item) => {
     const foundItem = mainStore.dockItems.find(defaultItem => defaultItem.page === item.page)
     // If the dock item does not have Bewly page, then use the original BiliBili page
-    if (!foundItem?.hasBewlyPage)
+    if (item.page === AppPage.Downloads)
+      item.useOriginalBiliPage = false
+    else if (!foundItem?.hasBewlyPage)
       item.useOriginalBiliPage = true
 
     item.visible && targetDockItems.push({
@@ -253,7 +257,7 @@ const dockTransformStyle = computed((): { transform: string, transformOrigin: st
         class="dock-content-inner"
       >
         <template v-for="dockItem in currentDockItems" :key="dockItem.page">
-          <Tooltip :content="$t(dockItem.i18nKey)" :placement="tooltipPlacement">
+          <Tooltip :content="dockItem.page === AppPage.Downloads ? '下载器' : $t(dockItem.i18nKey)" :placement="tooltipPlacement">
             <button
               class="dock-item group"
               :class="{
@@ -261,6 +265,7 @@ const dockTransformStyle = computed((): { transform: string, transformOrigin: st
                 'inactive': hoveringDockItem.themeMode && isDark,
                 'disable-glowing-effect': settings.disableDockGlowingEffect,
               }"
+              :aria-label="dockItem.page === AppPage.Downloads ? '下载器' : $t(dockItem.i18nKey)"
               @click="handleDockItemClick($event, dockItem)"
               @click.middle="openDockItemInNewTab(dockItem)"
             >
@@ -274,6 +279,9 @@ const dockTransformStyle = computed((): { transform: string, transformOrigin: st
                 :class="dockItem.iconActivated"
                 text-xl
               />
+              <span v-if="dockItem.page === AppPage.Downloads && downloadTaskCount" class="download-badge">
+                {{ downloadTaskCount > 99 ? '99+' : downloadTaskCount }}
+              </span>
             </button>
           </Tooltip>
         </template>
@@ -566,5 +574,21 @@ const dockTransformStyle = computed((): { transform: string, transformOrigin: st
   svg {
     --uno: "lg:w-22px w-18px lg:h-22px h-18px block align-middle";
   }
+}
+</style>
+
+<style scoped>
+.download-badge {
+  position: absolute;
+  top: 1px;
+  right: -4px;
+  min-width: 18px;
+  padding: 1px 4px;
+  border-radius: 12px;
+  background: var(--bew-theme-color);
+  color: var(--bew-bg);
+  font-size: 10px;
+  line-height: 16px;
+  pointer-events: none;
 }
 </style>

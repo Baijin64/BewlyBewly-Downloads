@@ -1,7 +1,9 @@
 import browser from 'webextension-polyfill'
 
+import { setupDownloadMessages } from './download'
 import { setupApiMsgLstnrs } from './messageListeners/api'
 import { setupTabMsgLstnrs } from './messageListeners/tabs'
+import { setupPlaybackMessages } from './playback'
 
 browser.runtime.onInstalled.addListener(async () => {
   // eslint-disable-next-line no-console
@@ -43,3 +45,5 @@ if (process.env.FIREFOX) {
 // Setup all message listeners
 setupApiMsgLstnrs()
 setupTabMsgLstnrs()
+setupDownloadMessages()
+setupPlaybackMessages()

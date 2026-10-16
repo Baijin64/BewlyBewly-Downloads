@@ -1,0 +1,16 @@
+{
+  "releaseTag": "build-deps-20220508",
+  "asset": "Bewly-Media-Tools-1.36.0-5.0.1.zip",
+  "files": {
+    "aria2c.exe": {
+      "version": "1.36.0",
+      "sha256": "0ae98794b3523634b0af362d6f8c04a9bbd32aeda959b72ca0e7fc24e84d2a66",
+      "upstream": "https://github.com/aria2/aria2"
+    },
+    "ffmpeg.exe": {
+      "version": "n5.0.1-4-ga5ebb3d25e-20220508",
+      "sha256": "6001ad699ca9894c01273ee22474ea7f60de642764c374d1234a9a75c41763b1",
+      "upstream": "https://ffmpeg.org/"
+    }
+  }
+}

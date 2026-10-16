@@ -392,6 +392,7 @@ topbar:
     manager: 投稿管理
 
 dock:
+  downloads: 下载器
   search: 搜索
   home: 首页
   anime: 番剧

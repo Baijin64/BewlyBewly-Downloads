@@ -1,4 +1,20 @@
-# BewlyBewly
+# BewlyBewly + Downloads
+
+Personal maintenance fork for the maintainer and friends. Browser extension **0.44.2**, Windows connector **0.2.6**. This is an independent fork, not an official continuation of either upstream project.
+
+- **Original BewlyBewly project:** [BewlyBewly/BewlyBewly](https://github.com/BewlyBewly/BewlyBewly), originally by [Hakadao](https://github.com/hakadao). Its MIT license and attribution are preserved.
+- **Bilidown author:** [王子周棋洛 — https://zhouql.vip/](https://zhouql.vip/). Bilidown's workflow and settings inspired the download integration; the local download core in this fork is independently implemented.
+- **This fork and downloads:** [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads). Private repository assets require repository access.
+
+For installation and builds, see [中文说明](README-cmn_CN.md), [personal-fork installation](docs/INSTALL-DOWNLOADS.md), and [build instructions](docs/BUILD-DOWNLOADS.md).
+
+The ZIP can be extracted and loaded with developer mode in Chrome/Edge. A valid CRX signature does not establish that a browser will allow direct installation or activation. Windows MSIX builds use a local development certificate; other computers must explicitly trust the included public certificate before installation. Node.js is detected locally and can be downloaded and installed from the connector when missing.
+
+The original upstream README is retained below. Its store links install the original extension, which does not include this fork's download features.
+
+---
+
+# BewlyBewly (upstream documentation)
 
 English | [官话 - 简体中文](README-cmn_CN.md) | [官話 - 繁體中文](README-cmn_TW.md) | [廣東話](README-jyut.md)
 

@@ -1,0 +1,89 @@
+/* Scoped to download views; reuse the existing Bewly palette and controls. */
+.bewly-download-ui {
+  color: var(--bew-text-1);
+  font-size: var(--bew-base-font-size);
+  line-height: 1.65;
+}
+.bewly-download-ui .b-button--type-default,
+.bewly-download-ui .b-button--type-secondary {
+  --b-button-color: var(--bew-fill-1);
+  --b-button-color-hover: var(--bew-fill-2);
+}
+.bewly-download-ui .b-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.bewly-download-ui .b-button:focus-visible {
+  outline: 2px solid var(--bew-theme-color);
+  outline-offset: 3px;
+}
+.bewly-download-ui input:not([type="checkbox"]):not([type="radio"]),
+.bewly-download-ui textarea {
+  border-radius: var(--bew-radius);
+  background: var(--bew-fill-1);
+  color: var(--bew-text-1);
+  font: inherit;
+  transition:
+    box-shadow 0.2s,
+    border-color 0.2s;
+}
+.bewly-download-ui input:not([type="checkbox"]):not([type="radio"]):focus,
+.bewly-download-ui textarea:focus {
+  outline: 2px solid var(--bew-theme-color);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+.bewly-download-ui .error {
+  color: var(--bew-error-color);
+  background: var(--bew-error-color-10);
+  border-radius: var(--bew-radius);
+  padding: 10px 14px;
+  overflow-wrap: anywhere;
+}
+.bewly-download-ui .features,
+.bewly-download-ui .output-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.bewly-download-ui .b-settings-item-group > main {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.bewly-download-ui .download-task .task-state {
+  padding: 4px 10px;
+  border-radius: var(--bew-radius-half);
+  background: var(--bew-theme-color-10);
+}
+.bewly-download-ui .download-task .task-state[data-status="completed"] {
+  color: var(--bew-success-color);
+  background: var(--bew-success-color-10);
+}
+.bewly-download-ui .download-task .task-state[data-status="failed"] {
+  color: var(--bew-error-color);
+  background: var(--bew-error-color-10);
+}
+.bewly-download-ui
+  .download-task
+  .task-state:is([data-status="pending"], [data-status="paused"], [data-status="cancelled"]) {
+  color: var(--bew-text-2);
+  background: var(--bew-fill-1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .bewly-download-ui *,
+  .bewly-download-ui *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.bewly-download-ui :is(.download-task, .add-links, .result) {
+  background: var(--bew-fill-alt);
+  border: 1px solid var(--bew-border-color);
+  border-radius: var(--bew-radius);
+  box-shadow: var(--bew-shadow-edge-glow-1), var(--bew-shadow-1);
+}
+.bewly-download-ui .part-list {
+  background: transparent;
+  padding: 0;
+}

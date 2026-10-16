@@ -1,4 +1,26 @@
-# BewlyBewly
+# BewlyBewly + 下载（个人维护分支）
+
+主要供维护者和身边朋友使用。当前扩展 **0.44.2**、Windows 本地连接器 **0.2.6**；不是原项目的官方续作。
+
+## 来源与致谢
+
+- **BewlyBewly 原项目：**[BewlyBewly/BewlyBewly](https://github.com/BewlyBewly/BewlyBewly)，原作者 [Hakadao](https://github.com/hakadao)。保留原项目 MIT 许可证与署名。
+- **Bilidown 原作者：**[王子周棋洛的主页](https://zhouql.vip/)。下载配置与使用流程参考 Bilidown，本分支的本地下载核心为重新实现。
+- **本维护分支：**[Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads)。仓库为私有，朋友需要获得仓库访问权限才能从 Releases 下载。
+
+## 使用本分支
+
+从本仓库 Releases 下载 Chrome 扩展 ZIP 和 Windows 连接器 MSIX。ZIP 解压后，在 Chrome/Edge 的扩展管理页开启开发者模式，加载含 manifest.json 的目录。CRX 也提供用于测试，但尚未验证普通环境下直接安装启用，不能保证绕过浏览器的分发限制。
+
+连接器不再内置 Node.js，安装后从开始菜单打开一次。已有兼容 Node 会复用，缺少时在本地窗口点击“下载并安装 Node.js”；Windows 可能请求安装授权。MSIX 使用本机开发证书签名，其他电脑需要先手动信任随包的公开证书，不包含或分发签名私钥。
+
+详细步骤见 [安装说明](docs/INSTALL-DOWNLOADS.md)、[构建说明](docs/BUILD-DOWNLOADS.md) 和 [功能与验证记录](docs/DOWNLOADS.md)。
+
+以下保留上游原始说明，其中商店链接对应 BewlyBewly 原版，不包含本分支新增的下载功能。
+
+---
+
+# BewlyBewly（上游原始说明）
 
 [English](README.md) | 官话 - 简体中文 | [官話 - 繁体中文](README-cmn_TW.md) | [廣東話](README-jyut.md)
 

@@ -397,6 +397,7 @@ topbar:
     manager: Manager
 
 dock:
+  downloads: Downloads
   search: Search
   home: Home
   anime: Anime

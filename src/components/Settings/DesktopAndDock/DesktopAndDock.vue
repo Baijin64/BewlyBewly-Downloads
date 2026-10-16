@@ -2,6 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import draggable from 'vuedraggable'
 
+import { AppPage } from '~/enums/appEnums'
 import { settings } from '~/logic'
 import type { DockItem } from '~/stores/mainStore'
 import { useMainStore } from '~/stores/mainStore'
@@ -179,6 +180,7 @@ function handleToggleDockItem(dockItem: any) {
                 </div>
                 <div flex="~ gap-4 items-center justify-between wrap">
                   <div
+                    v-if="element.page !== AppPage.Downloads"
                     flex="~ items-center"
                   >
                     {{ $t('settings.dock_item_use_original_bili_web_page') }}

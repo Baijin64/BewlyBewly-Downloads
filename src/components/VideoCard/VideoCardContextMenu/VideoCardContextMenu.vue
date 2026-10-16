@@ -3,6 +3,8 @@ import type { CSSProperties } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useBewlyApp } from '~/composables/useAppProvider'
+import { openVideoDownload } from '~/download/state'
+import { settings } from '~/logic'
 import { Type as ThreePointV2Type } from '~/models/video/appForYou'
 import { openLinkToNewTab } from '~/utils/main'
 import { openLinkInBackground } from '~/utils/tabs'
@@ -46,6 +48,7 @@ enum VideoOption {
   CopyVideoLink,
   CopyBVNumber,
   CopyAVNumber,
+  Download,
 }
 
 const commonOptions = computed((): { command: VideoOption, name: string, icon: string, color?: string }[][] => {
@@ -68,6 +71,9 @@ const commonOptions = computed((): { command: VideoOption, name: string, icon: s
       { command: VideoOption.ViewTheOriginalCover, name: t('video_card.operation.view_the_original_cover'), icon: 'i-solar:gallery-minimalistic-bold-duotone' },
     ],
   ]
+  if (settings.value.enableDownloads && props.video.bvid && !props.video.roomid) {
+    result.unshift([{ command: VideoOption.Download, name: '下载视频…', icon: 'i-mingcute:download-2-line' }])
+  }
   if (getVideoType() === 'bangumi' || getVideoType() === 'live') {
     result = result.map((group) => {
       return group.filter((opt) => {
@@ -98,6 +104,10 @@ function handleAppMoreCommand(command: ThreePointV2Type) {
 
 function handleCommonCommand(command: VideoOption) {
   switch (command) {
+    case VideoOption.Download:
+      openVideoDownload(props.video.bvid!, props.video.cid)
+      handleClose()
+      break
     case VideoOption.OpenInNewTab:
       openLinkToNewTab(props.video.url!)
       handleClose()

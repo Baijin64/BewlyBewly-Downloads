@@ -1,6 +1,7 @@
 import fs from 'fs-extra'
 import type { Manifest } from 'webextension-polyfill'
 
+import identity from '../native/identity.json'
 import type PkgType from '../package.json'
 import { isDev, isFirefox, isSafari, port, r } from '../scripts/utils'
 
@@ -11,6 +12,7 @@ export async function getManifest() {
   // can also be conditional based on your need
   const manifest: Manifest.WebExtensionManifest = {
     manifest_version: 3,
+    key: identity.publicKey,
     name: `${pkg.displayName || pkg.name}${isDev ? ' Dev' : ''}`,
     version: pkg.version,
     description: pkg.description,
@@ -37,16 +39,21 @@ export async function getManifest() {
     },
     permissions: [
       'storage',
+      'alarms',
       'declarativeNetRequest',
       'tabs',
+      'nativeMessaging',
+      'cookies',
       ...isFirefox
-        ? ['webRequest', 'webRequestBlocking', 'cookies']
+        ? ['webRequest', 'webRequestBlocking']
         : [],
     ],
     host_permissions: [
       '*://*.bilibili.com/*',
       '*://*.hdslb.com/*',
     ],
+    optional_permissions: isFirefox ? [] : ['webRequest'],
+    optional_host_permissions: ['https://*.bilivideo.com/*', 'https://*.bilivideo.cn/*', 'https://*.bilivideo.net/*', 'https://*.akamaized.net/*'],
     content_scripts: [
       {
         matches: [

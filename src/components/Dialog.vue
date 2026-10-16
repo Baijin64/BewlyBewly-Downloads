@@ -18,15 +18,21 @@ const props = withDefaults(defineProps<{
   centerFooter?: boolean
   loading?: boolean
   preventCloseWhenLoading?: boolean
+  confirmOnEnter?: boolean
+  zIndex?: number
 }>(), {
   preventCloseWhenLoading: true,
   frostedGlass: true,
   showFooter: true,
+  confirmOnEnter: true,
+  zIndex: 10002,
 })
 
 const emit = defineEmits(['close', 'confirm'])
 
 onKeyStroke('Enter', (e: KeyboardEvent) => {
+  if (!props.confirmOnEnter)
+    return
   e.preventDefault()
   if (!props.loading)
     handleConfirm()
@@ -98,6 +104,7 @@ function handleConfirm() {
       <div
         v-if="showDialog"
         class="dialog"
+        :style="{ zIndex }"
         pos="fixed top-0 left-0" w-full h-full z-10002
         transform-gpu pointer-events-auto
       >

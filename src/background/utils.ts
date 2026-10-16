@@ -59,7 +59,7 @@ interface APIMAP {
 }
 // 工厂函数API_LISTENER_FACTORY
 function apiListenerFactory(API_MAP: APIMAP) {
-  return async (message: Message, sender?: Browser.Runtime.MessageSender, sendResponse?: Function) => {
+  const handleApi = async (message: Message, sender?: Browser.Runtime.MessageSender, sendResponse?: Function) => {
     const contentScriptQuery = message.contentScriptQuery
     // 检测是否有contentScriptQuery
     if (!contentScriptQuery || !API_MAP[contentScriptQuery])
@@ -76,6 +76,13 @@ function apiListenerFactory(API_MAP: APIMAP) {
     }
 
     return doRequest(message, api, sendResponse)
+  }
+  // An async listener claims a response even when it resolves to undefined.
+  // Ignore messages owned by the download/playback listeners synchronously.
+  return (message: Message, sender?: Browser.Runtime.MessageSender, sendResponse?: Function) => {
+    if (!message?.contentScriptQuery || !Object.hasOwn(API_MAP, message.contentScriptQuery))
+      return undefined
+    return handleApi(message, sender, sendResponse)
   }
 }
 

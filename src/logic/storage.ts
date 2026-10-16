@@ -7,6 +7,7 @@ export const storageDemo = useStorageLocal('webext-demo', 'Storage Demo')
 export const accessKey = useStorageLocal('accessKey', '')
 
 export interface Settings {
+  enableDownloads: boolean
   touchScreenOptimization: boolean
   enableGridLayoutSwitcher: boolean
   enableHorizontalScrolling: boolean
@@ -112,6 +113,7 @@ export interface Settings {
 }
 
 export const originalSettings: Settings = {
+  enableDownloads: true,
   touchScreenOptimization: false,
   enableGridLayoutSwitcher: true,
   enableHorizontalScrolling: false,

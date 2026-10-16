@@ -36,7 +36,12 @@ export const API_COLLECTION = {
 // Merge all API objects into one
 const FullAPI = Object.assign({}, ...API_COLLECTION)
 // Create a message listener for each API
-const handleMessage = apiListenerFactory(FullAPI)
+const apiHandler = apiListenerFactory(FullAPI)
+function handleMessage(...args: Parameters<typeof apiHandler>) {
+  if (args[0].bewlyDownload)
+    return undefined
+  return apiHandler(...args)
+}
 
 export function setupApiMsgLstnrs() {
   browser.runtime.onConnect.removeListener(handleConnect)

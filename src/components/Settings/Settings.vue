@@ -14,6 +14,7 @@ const { t } = useI18n()
 
 const settingsMenu = {
   [MenuType.General]: defineAsyncComponent(() => import('./General/General.vue')),
+  [MenuType.Downloads]: defineAsyncComponent(() => import('~/download/components/DownloadSettings.vue')),
   [MenuType.DesktopAndDock]: defineAsyncComponent(() => import('./DesktopAndDock/DesktopAndDock.vue')),
   [MenuType.Appearance]: defineAsyncComponent(() => import('./Appearance/Appearance.vue')),
   [MenuType.BewlyPages]: defineAsyncComponent(() => import('./BewlyPages/BewlyPages.vue')),
@@ -54,6 +55,12 @@ const settingsMenuItems = computed((): MenuItem[] => {
       icon: 'i-mingcute:settings-3-line',
       iconActivated: 'i-mingcute:settings-3-fill',
       title: t('settings.menu_general'),
+    },
+    {
+      value: MenuType.Downloads,
+      icon: 'i-mingcute:download-2-line',
+      iconActivated: 'i-mingcute:download-2-fill',
+      title: '下载',
     },
     {
       value: MenuType.DesktopAndDock,

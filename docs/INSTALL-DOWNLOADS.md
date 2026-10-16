@@ -1,0 +1,41 @@
+# 安装个人维护版
+
+此分支主要供维护者及朋友使用，不是 BewlyBewly 或 Bilidown 官方发布。
+
+原项目：[BewlyBewly/BewlyBewly](https://github.com/BewlyBewly/BewlyBewly)。Bilidown 原作者主页：[王子周棋洛](https://zhouql.vip/)。
+
+## 获取文件
+
+打开本仓库的 [Releases](https://github.com/Baijin64/BewlyBewly-Downloads/releases)。私有仓库需要先登录有访问权限的 GitHub 账号。
+
+- Chrome/Edge 扩展：选择名称含 Chrome 或 Downloads 的 ZIP，解压到打算长期保留的文件夹。
+- 本地连接器：下载 Bewly-DownloadHelper-0.2.6-x64.msix。
+- 其他电脑首次安装 MSIX 时，按 Windows 提示信任随包提供的 BewlyDownload-Development.cer。它是公开证书，不含私钥；只应在你了解并信任维护者时导入。也可自行构建并用自己的代码签名证书签名。
+
+开发证书说明可参考 [Microsoft 的包签名文档](https://learn.microsoft.com/en-us/windows/msix/package/create-certificate-package-signing)。本仓库不会自动更改浏览器安全策略或在后台导入证书。
+
+## 浏览器扩展
+
+1. 打开 chrome://extensions 或 edge://extensions，开启开发者模式。
+2. 选择“加载已解压的扩展”，选中解压后直接含 manifest.json 的文件夹。
+3. 刷新 B 站页面。
+
+更新时覆盖原文件夹内容并重载扩展。不要在使用后删除该文件夹。
+
+CRX 签名和固定 ID 已检查，但本项目尚未通过 Chrome Web Store/Edge Add-ons 发布；直接拖入 CRX 可能被禁用。当前明确支持的本地测试入口是加载解压目录。不要为了安装而关闭浏览器安全保护或修改企业策略。
+
+## Windows 本地连接器
+
+1. 安装 MSIX，然后从开始菜单打开“Bewly 下载助手”一次，完成当前用户的 Chrome/Edge Native Messaging 注册。
+2. 有兼容的 Node.js 24+ x64 时直接启动。缺少或不兼容时，在本地窗口点击“下载并安装 Node.js”，完成 Windows 安装授权。
+3. 回到 B 站下载界面，点击重试连接；任务与设置保存在本机。
+
+FFmpeg 和 aria2 随连接器提供。Node 安装程序下载后会校验 SHA-256 与 Windows 签名，临时 MSI 会清理；系统 Node 和已安装连接器保留供后续调用。
+
+连接器约 27.6 MiB，安装文件约 65.1 MiB；系统已存在的 Node 不重复打包。实际数值以该版本 SHA256SUMS 和构建报告为准。
+
+## 更新与验证范围
+
+浏览器扩展与连接器分别更新。当前连接器 0.2.6 已在维护者电脑验证系统 Node、下载后台、FFmpeg/aria2 和托盘；缺 Node 环境的完整 UAC/MSI 安装交互仍需单独验收。播放优化的真实慢网/CDN 切换测试仍保留到后续。
+
+本分支没有内置 AI 模型，也不会因为下载功能将视频上传到 AI 服务。

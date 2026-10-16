@@ -15,6 +15,8 @@ import emitter from '~/utils/mitt'
 import { setupNecessarySettingsWatchers } from './necessarySettingsWatchers'
 
 const mainStore = useMainStore()
+const DownloadRoot = defineAsyncComponent(() => import('~/download/components/DownloadRoot.vue'))
+const PlaybackRoot = defineAsyncComponent(() => import('~/playback/PlaybackRoot.vue'))
 const settingsStore = useSettingsStore()
 const { isDark } = useDark()
 const [showSettings, toggleSettings] = useToggle(false)
@@ -37,6 +39,7 @@ const pages = {
   [AppPage.WatchLater]: defineAsyncComponent(() => import('./WatchLater/WatchLater.vue')),
   [AppPage.Favorites]: defineAsyncComponent(() => import('./Favorites/Favorites.vue')),
   [AppPage.Moments]: defineAsyncComponent(() => import('./Moments/Moments.vue')),
+  [AppPage.Downloads]: defineAsyncComponent(() => import('~/download/components/DownloaderPage.vue')),
 }
 const mainAppRef = ref<HTMLElement>() as Ref<HTMLElement>
 const scrollbarRef = ref()
@@ -117,6 +120,9 @@ const showTopBar = computed((): boolean => {
 })
 
 const isFirstTimeActivatedPageChange = ref<boolean>(true)
+useEventListener(window, 'bewly-open-downloads', () => {
+  activatedPage.value = AppPage.Downloads
+})
 watch(
   () => activatedPage.value,
   () => {
@@ -343,6 +349,8 @@ provide<BewlyAppProvider>('BEWLY_APP', {
     </template>
 
     <!-- Settings -->
+    <DownloadRoot v-if="settings.enableDownloads" />
+    <PlaybackRoot v-if="isVideoOrBangumiPage()" />
     <KeepAlive>
       <Settings v-if="showSettings" z-10002 @close="showSettings = false" />
     </KeepAlive>

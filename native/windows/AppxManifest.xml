@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
+  IgnorableNamespaces="uap uap5 desktop4 rescap virtualization">
+  <Identity Name="Bewly.DownloadHelper" Publisher="CN=BewlyDownload.Local" Version="0.2.6.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Bewly 下载助手</DisplayName>
+    <PublisherDisplayName>Bewly local development</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <virtualization:FileSystemWriteVirtualization>
+      <virtualization:ExcludedDirectories>
+        <virtualization:ExcludedDirectory>$(KnownFolder:LocalAppData)\BewlyDownload</virtualization:ExcludedDirectory>
+      </virtualization:ExcludedDirectories>
+    </virtualization:FileSystemWriteVirtualization>
+    <virtualization:RegistryWriteVirtualization>
+      <virtualization:ExcludedKeys>
+        <virtualization:ExcludedKey>HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\io.bewly.download</virtualization:ExcludedKey>
+        <virtualization:ExcludedKey>HKEY_CURRENT_USER\Software\Microsoft\Edge\NativeMessagingHosts\io.bewly.download</virtualization:ExcludedKey>
+      </virtualization:ExcludedKeys>
+    </virtualization:RegistryWriteVirtualization>
+  </Properties>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
+  <Resources><Resource Language="zh-CN" /><Resource Language="en-US" /></Resources>
+  <Applications>
+    <Application Id="App" Executable="BewlyDownloadHost.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Bewly 下载助手" Description="连接 BewlyBewly 浏览器扩展与本地下载核心" BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias" Executable="BewlyDownloadHost.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias desktop4:Subsystem="windows"><uap5:ExecutionAlias Alias="BewlyDownloadHost.exe" /></uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities><rescap:Capability Name="runFullTrust" /><rescap:Capability Name="unvirtualizedResources" /></Capabilities>
+</Package>

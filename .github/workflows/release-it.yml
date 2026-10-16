@@ -18,6 +18,8 @@ on:
 
 jobs:
   release:
+    # Store submission belongs to the original project, not this personal fork.
+    if: github.repository == 'BewlyBewly/BewlyBewly'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

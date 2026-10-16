@@ -16,3 +16,15 @@ extension-safari/
 node_modules
 web-ext-profile
 extension-safari-macos/
+
+# Local download sessions, private signing material and generated installers
+*.dpapi
+*.sqlite
+*.sqlite-*
+*.bilidownexport
+*.pfx
+*.p12
+*.key
+connection.json
+*.msix
+*.msixbundle

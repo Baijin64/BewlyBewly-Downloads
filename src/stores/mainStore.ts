@@ -84,6 +84,16 @@ export const useMainStore = defineStore('main', () => {
         hasBewlyPage: true,
       },
       {
+        i18nKey: 'dock.downloads',
+        icon: 'i-mingcute:download-2-line',
+        iconActivated: 'i-mingcute:download-2-fill',
+        page: AppPage.Downloads,
+        openInNewTab: false,
+        useOriginalBiliPage: false,
+        url: 'https://www.bilibili.com/?page=Downloads',
+        hasBewlyPage: true,
+      },
+      {
         i18nKey: 'dock.moments',
         icon: 'i-tabler:windmill',
         iconActivated: 'i-tabler:windmill-filled',

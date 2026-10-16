@@ -1,16 +1,30 @@
 <script lang="ts" setup>
-defineProps<{
-  modelValue: boolean
+const props = defineProps<{
   label?: string
+  ariaLabel?: string
+  disabled?: boolean
 }>()
 
-const model = defineModel()
+const model = defineModel<boolean>({ required: true })
+function toggle() {
+  if (!props.disabled)
+    model.value = !model.value
+}
 </script>
 
 <template>
-  <label cursor="pointer" pointer="auto" flex items-center gap-3>
-    <span>{{ label }}</span>
-    <input v-model="model" type="checkbox" hidden>
+  <label
+    cursor="pointer" pointer="auto" flex items-center gap-3
+    role="switch" :aria-label="ariaLabel || label" :aria-checked="model" :aria-disabled="disabled || undefined"
+    :tabindex="disabled ? -1 : 0" :class="{ 'is-disabled': disabled }"
+    @click.prevent="toggle"
+    @keydown.space.stop.prevent="toggle" @keydown.enter.stop.prevent="toggle"
+  >
+    <span v-if="label">{{ label }}</span>
+    <input
+      :checked="model" type="checkbox" hidden :disabled="disabled" tabindex="-1"
+      aria-hidden="true"
+    >
     <span
       inline-block w="$b-button-width" h="$b-button-height" bg="$bew-fill-1" rounded="[calc(var(--b-button-height)/2)]"
       relative border="size-$b-border-width color-$bew-border-color"
@@ -27,6 +41,15 @@ label {
   --b-button-width: 50px;
   --b-button-height: 25px;
   --b-border-width: 2px;
+}
+label:focus-visible {
+  outline: 2px solid var(--bew-theme-color);
+  outline-offset: 4px;
+  border-radius: 50px;
+}
+label.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 input[type="checkbox"] + span::after {

@@ -5,7 +5,14 @@ import { fileURLToPath } from 'node:url'
 import { bgCyan, black } from 'kolorist'
 
 export const port = Number.parseInt(process.env.PORT || '') || 3303
-export const r = (...args: string[]) => resolve(dirname(fileURLToPath(import.meta.url)), '..', ...args)
+export function r(...args: string[]) {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  if (process.env.BEWLY_BUILD_DIR && /^(?:\.\/)?extension(?:\/|$)/.test(args[0] || '')) {
+    const relative = args[0].replace(/^(?:\.\/)?extension\/?/, '')
+    return resolve(root, process.env.BEWLY_BUILD_DIR, relative, ...args.slice(1))
+  }
+  return resolve(root, ...args)
+}
 export const isDev = process.env.NODE_ENV !== 'production'
 export const isWin = process.platform === 'win32'
 export const isFirefox = process.env.FIREFOX === 'true'
