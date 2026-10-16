@@ -5,13 +5,15 @@ let playbackEnabled = false
 export function setInstalled(value) { installed = value }
 const options = { quality: 0, codec: 'auto', audioQuality: 'auto', mode: 'video', cover: false, subtitles: false, outputs: ['video'], subtitleLanguages: [], filenameTemplate: '%title% [%bv%-%cid%]', folderTemplate: '', createFolder: false, createFolderAddIndex: false }
 let settings = { directory: 'D:\\Videos\\Bilibili', maxConcurrent: 4, soundTip: true, shutdown: false, listenClipboard: false, tray: true, idleExitMinutes: 0, features: { cover: true, audio: true, xml: true, ass: true, nfo: true, srt: true, tools: true }, defaultOptions: options }
-const fixture = (id, title, status, part = title) => ({ id, bvid: 'BV1GJ411x7h7', cid: 42, title, part, page: 1, options: { ...options }, status, stage: 'video', progress: 62, speed: 5242880, error: '' })
+const fixture = (id, title, status, part = title) => ({ id, bvid: 'BV1GJ411x7h7', cid: 42, title, part, author: '示例 UP 主', uid: 12345, cover: 'https://i2.hdslb.com/bfs/archive/1ada8c32a9d168e4b2ee3e010f24789ba3353785.jpg', createdAt: '2026-10-16T14:32:00Z', ...(status === 'completed' ? { completedAt: '2026-10-16T14:36:00Z' } : {}), page: 1, options: { ...options }, status, stage: 'video', progress: 62, speed: 5242880, error: '' })
 const tasks = [
   fixture('pending-1', '从网页到本地：建立自己的视频资料库', 'pending', '第一集 · 下载与整理'),
   fixture('pending-2', '为什么我们需要更好的下载管理器', 'pending'),
   fixture('pending-3', '探索宇宙的边界：韦布望远镜的新发现', 'pending'),
   fixture('active-1', '一口气看懂现代计算机', 'downloading', '第八章 · 从逻辑门到处理器'),
   { ...fixture('done-1', '一场关于人工智能的长谈', 'completed'), output: 'D:\\Videos\\Bilibili\\一场关于人工智能的长谈.mp4' },
+  { ...fixture('done-2', '旧版导入：没有封面和完成时间的记录', 'completed'), cover: '', author: '', uid: undefined, completedAt: undefined },
+  { ...fixture('done-3', '另一段值得收藏的视频', 'completed'), author: '影像记录者', completedAt: '2026-10-09 19:32', options: { ...options, outputs: ['video', 'cover', 'nfo'] } },
   { ...fixture('failed-1', '消失在时间里的声音', 'failed'), error: '当前账号或视频没有所选音质，没有自动替换音轨' },
 ]
 const groups = { pending: ['pending'], active: ['queued', 'resolving', 'downloading', 'paused', 'muxing', 'postprocessing'], completed: ['completed'], failed: ['failed', 'cancelled'] }

@@ -11,6 +11,7 @@ import ProgressPreview from './ProgressPreview.vue'
 
 const root = ref<HTMLElement>()
 const dark = ref(false)
+const narrow = ref(false)
 const progressOnly = new URLSearchParams(location.search).has('progress')
 const themeColor = ref('#00A1D6')
 watch(themeColor, value => document.documentElement.style.setProperty('--bew-theme-color', value), { immediate: true })
@@ -19,12 +20,13 @@ watch(dark, value => document.documentElement.classList.toggle('dark', value), {
 provide('BEWLY_APP', { mainAppRef: root, reachTop: ref(true), handlePageRefresh: ref(), handleReachBottom: ref() })
 </script>
 <template>
-  <main ref="root" class="preview">
+  <main ref="root" class="preview" :class="{ narrow }">
     <div class="preview-controls">
       <span>界面验证 · 模拟任务</span>
       <Button size="small" type="primary" @click="openVideoDownload('BV1GJ411x7h7')">打开下载弹窗</Button>
       <Button size="small" @click="dark = !dark">切换明暗主题</Button>
       <Button size="small" @click="themeColor = themeColor === '#00A1D6' ? '#8B5CF6' : '#00A1D6'">切换主题色</Button>
+      <Button size="small" @click="narrow = !narrow">切换窄屏预览</Button>
       <Button size="small" @click="setInstalled(false); openVideoDownload('BV1GJ411x7h7')">模拟断开</Button>
       <Button size="small" @click="setInstalled(true)">恢复连接</Button>
     </div>
@@ -42,4 +44,5 @@ body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color:
 .preview { min-height: 100vh; padding: 20px 110px 40px 60px; }
 .preview-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; color: var(--bew-text-2); max-width: 1200px; margin: auto; }
 .preview .dock-wrap { left: 0; }
+.preview.narrow .downloader-page { max-width: 480px; }
 </style>

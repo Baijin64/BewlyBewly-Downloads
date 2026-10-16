@@ -74,6 +74,10 @@ export interface DownloadTask {
   part: string
   page?: number
   author?: string
+  uid?: number
+  cover?: string
+  createdAt?: string
+  completedAt?: string
   options: DownloadOptions
   status: 'pending' | 'queued' | 'resolving' | 'downloading' | 'paused' | 'muxing' | 'postprocessing' | 'completed' | 'failed' | 'cancelled'
   stage?: string

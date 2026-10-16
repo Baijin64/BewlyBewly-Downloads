@@ -5,7 +5,6 @@ import Button from '~/components/Button.vue'
 import Dialog from '~/components/Dialog.vue'
 
 import { downloadRequest } from '../client'
-import { outputLabels, statusLabels } from '../presentation'
 import { downloadTaskCount } from '../state'
 import { pickLocalFile, runTool } from '../toolClient'
 import type {
@@ -17,6 +16,7 @@ import type {
 import { defaultOptions, normalizeDownloadOptions } from '../types'
 import DownloadOptionsForm from './DownloadOptionsForm.vue'
 import DownloadProgress from './DownloadProgress.vue'
+import DownloadTaskHeader from './DownloadTaskHeader.vue'
 import SelectionButton from './SelectionButton.vue'
 
 const data = ref<TaskQuery>({
@@ -350,24 +350,7 @@ onBeforeUnmount(() => {
         <SelectionButton size="small" :model-value="selected.includes(task.id)" :aria-label="`选择 ${task.title}`" @update:model-value="toggle(task.id, $event)">
           {{ selected.includes(task.id) ? '已选' : '选择' }}
         </SelectionButton>
-        <div class="task-title">
-          <a
-            :href="`https://www.bilibili.com/video/${task.bvid}/?p=${task.page || 1}`"
-            target="_blank"
-            rel="noopener"
-          >{{ task.title }}</a>
-          <p v-if="task.part !== task.title" class="hint">
-            {{ task.part }}
-          </p>
-          <p class="hint">
-            {{
-              task.options?.outputs
-                ?.map((kind) => outputLabels[kind])
-                .join(" · ")
-            }}
-          </p>
-        </div>
-        <span class="task-state" :data-status="task.status">{{ statusLabels[task.status] }}</span>
+        <DownloadTaskHeader :task="task" />
       </div>
       <DownloadProgress :task="task" />
       <p v-if="task.error" class="error">
@@ -551,6 +534,7 @@ onBeforeUnmount(() => {
   color: var(--bew-text-2);
 }
 .download-task {
+  container-type: inline-size;
   display: grid;
   gap: 12px;
   padding: 20px;
@@ -562,18 +546,6 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 12px;
   align-items: flex-start;
-}
-.task-title {
-  flex: 1;
-  min-width: 0;
-}
-.task-title a {
-  font-weight: 650;
-}
-.task-state {
-  color: var(--bew-theme-color);
-  font-size: 12px;
-  flex-shrink: 0;
 }
 .path {
   overflow-wrap: anywhere;
