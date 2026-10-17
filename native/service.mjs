@@ -4,12 +4,15 @@ import { existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSyn
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { Aria2, Bilibili, DownloadQueue, publicTask, TaskStore, VERSION } from './core.mjs'
 import { outputLocation, validateOptions } from './formats.mjs'
 import { desktop, ToolJobs } from './tools.mjs'
 import { LegacyMigration } from './migration.mjs'
 import { CompletionPolicy } from './completion.mjs'
+import { ServiceLifetime } from './lifetime.mjs'
+import { writeUiSnapshot } from './snapshot.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 export const dataDirectory = process.env.BEWLY_DOWNLOAD_DATA || path.join(process.env.LOCALAPPDATA || root, 'BewlyDownload')
@@ -30,7 +33,20 @@ export async function startService() {
   }
   catch {
     const pid = Number(readFileSync(lockPath, 'utf8'))
-    try { process.kill(pid, 0); return } catch { unlinkSync(lockPath); return startService() }
+    try { process.kill(pid, 0) } catch { unlinkSync(lockPath); return startService() }
+    if (process.env.BEWLY_DOWNLOAD_MODE !== 'on-demand') {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try {
+          const existing = JSON.parse(readFileSync(path.join(dataDirectory, 'connection.json'), 'utf8'))
+          const response = await fetch(`http://127.0.0.1:${existing.port}/rpc`, { method: 'POST', headers: { Authorization: `Bearer ${existing.token}` }, body: JSON.stringify({ method: 'desktopAction', params: { action: 'keepRunning' } }), signal: AbortSignal.timeout(1000) })
+          if ((await response.json()).ok) return
+        } catch {}
+        try { process.kill(pid, 0) } catch { return startService() }
+        await delay(100)
+      }
+      throw new Error('无法切换为手动后台模式')
+    }
+    return
   }
   const descriptor = path.join(dataDirectory, 'connection.json')
   const sessionPath = path.join(dataDirectory, 'session.dpapi')
@@ -45,20 +61,43 @@ export async function startService() {
   const tools = new ToolJobs({ store, queue, root, bilibili })
   const migration = new LegacyMigration({ store, dataDirectory })
   const policy = new CompletionPolicy()
+  const lifetime = new ServiceLifetime(process.env.BEWLY_DOWNLOAD_MODE)
+  let activeRequests = 0
   queue.onStarted = task => policy.started(task)
   queue.onCompleted = () => policy.finished()
-  let lastActivity = Date.now()
   let lastTrayContact = 0
   let tray
   let housekeeping
   const headless = process.env.BEWLY_DOWNLOAD_HEADLESS === '1'
-  const begin = () => { policy.begin(store.list()); lastActivity = Date.now() }
+  const runtime = () => lifetime.snapshot(!!(queue.running.size || tools.running.size || activeRequests || policy.due), store.settings().idleExitMinutes)
+  const ensureTray = () => {
+    if (headless || (tray && tray.exitCode === null)) return
+    tray = spawn(path.join(root, 'BewlyDownloadHost.exe'), ['--tray'], { detached: true, windowsHide: true, stdio: 'ignore' })
+    tray.once('error', () => { tray = undefined })
+    tray.unref()
+  }
+  const begin = () => { policy.begin(store.list()); lifetime.touch() }
+  const healthInfo = () => ({ version: VERSION, protocol: 2, storageError: queue.storageError, lastTrayContact, capabilities: ['on-demand', 'pending', 'batch', 'audio-highest', 'formats', 'naming', 'collections', 'tools', 'migration', 'tray'], settings: store.settings(), engineInstalled: existsSync(path.join(bin, 'aria2c.exe')) && existsSync(path.join(bin, 'ffmpeg.exe')) })
+  let snapshotTimer
+  const saveSnapshot = () => {
+    clearTimeout(snapshotTimer)
+    try { writeUiSnapshot(dataDirectory, healthInfo(), store.list(), store.query({ pageSize: 1 }).counts) } catch { /* A UI cache failure must not fail a download. */ }
+  }
+  const scheduleSnapshot = () => { clearTimeout(snapshotTimer); snapshotTimer = setTimeout(saveSnapshot, 250) }
+  for (const method of ['put', 'remove', 'settings']) {
+    const original = store[method].bind(store)
+    store[method] = (...args) => {
+      const result = original(...args)
+      if (method !== 'settings' || args.length) scheduleSnapshot()
+      return result
+    }
+  }
   const addTasks = async (params, start) => {
     if (start) begin()
     return queue.enqueue(params.info || await bilibili.inspect(params.video), params.cids, params.options, params.prepared || {}, start).map(publicTask)
   }
   const handlers = {
-    health: async () => ({ version: VERSION, protocol: 2, storageError: queue.storageError, lastTrayContact, capabilities: ['pending', 'batch', 'audio-highest', 'formats', 'naming', 'collections', 'tools', 'migration', 'tray'], settings: store.settings(), engineInstalled: existsSync(path.join(bin, 'aria2c.exe')) && existsSync(path.join(bin, 'ffmpeg.exe')) }),
+    health: async () => healthInfo(),
     configure: async params => { const settings = store.settings(params); queue.pump(); return settings },
     inspect: async params => bilibili.inspect(params.video),
     expandLink: async params => bilibili.expand(params.video),
@@ -102,9 +141,10 @@ export async function startService() {
     desktopState: async () => {
       lastTrayContact = Date.now()
       const counts = store.query({ pageSize: 1 }).counts, settings = store.settings()
-      return { exiting: closing, pending: counts.pending, active: counts.active, completed: policy.completed, tray: settings.tray, soundTip: settings.soundTip, listenClipboard: settings.listenClipboard, shutdownDue: policy.due }
+      return { exiting: closing, mode: lifetime.mode, pending: counts.pending, active: counts.active, completed: policy.completed, tray: settings.tray, soundTip: settings.soundTip, listenClipboard: settings.listenClipboard, shutdownDue: policy.due }
     },
     desktopAction: async params => {
+      if (params.action === 'keepRunning') { lifetime.manual(); ensureTray(); return { mode: 'manual' } }
       if (params.action === 'cancelShutdown') { policy.cancel(); return { cancelled: true } }
       if (params.action === 'exit') { setTimeout(close, 200); return { exiting: true } }
       if (!['start', 'pause'].includes(params.action)) throw new Error('无效托盘操作')
@@ -134,14 +174,18 @@ export async function startService() {
       }
       const { method, params = {}, session } = JSON.parse(body)
       if (!Object.hasOwn(handlers, method)) throw new Error('未知下载操作')
-      if (method !== 'desktopState') lastActivity = Date.now()
+      if (closing && method !== 'desktopState') { response.end(JSON.stringify({ ok: false, code: 'SERVICE_STOPPING', error: '下载助手正在空闲退出' })); return }
+      if (!['health', 'queryTasks', 'listTasks', 'desktopState'].includes(method) && !(method === 'tool' && params.op === 'status')) lifetime.touch()
       if (session !== undefined) {
         if (typeof session !== 'string' || session.length > 32768 || /[\r\n]/.test(session)) throw new Error('无效登录信息')
         cookie = session
         if (cookie) writeFileSync(sessionPath, cryptSession('--protect', cookie), { mode: 0o600 })
         else if (existsSync(sessionPath)) unlinkSync(sessionPath)
       }
-      response.end(JSON.stringify({ ok: true, result: await handlers[method](params) }))
+      activeRequests++
+      let result
+      try { result = await handlers[method](params) } finally { activeRequests-- }
+      response.end(JSON.stringify({ ok: true, result, runtime: runtime() }))
     }
     catch (error) { response.end(JSON.stringify({ ok: false, error: error.message })) }
   })
@@ -155,6 +199,7 @@ export async function startService() {
     closing = true
     clearInterval(housekeeping)
     await tools.close(); await queue.close()
+    saveSnapshot()
     if (tray && tray.exitCode === null) {
       await Promise.race([new Promise(resolve => tray.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 3500))])
       if (tray.exitCode === null) tray.kill()
@@ -164,11 +209,8 @@ export async function startService() {
     process.exit(0)
   }
   process.once('SIGTERM', close); process.once('SIGINT', close)
-  if (!headless) {
-    tray = spawn(path.join(root, 'BewlyDownloadHost.exe'), ['--tray'], { detached: true, windowsHide: true, stdio: 'ignore' })
-    tray.once('error', () => { tray = undefined })
-    tray.unref()
-  }
+  ensureTray()
+  saveSnapshot()
   housekeeping = setInterval(() => {
     const settings = store.settings(), tasks = store.list()
     const due = policy.evaluate(tasks, settings.shutdown && tools.running.size === 0)
@@ -177,8 +219,8 @@ export async function startService() {
       const shutdown = spawn('shutdown.exe', ['/s', '/t', '0'], { windowsHide: true, stdio: 'ignore' })
       shutdown.once('error', () => {})
     }
-    if (queue.running.size) lastActivity = Date.now()
-    if (settings.idleExitMinutes && !policy.due && !queue.running.size && !tools.running.size && Date.now() - lastActivity >= settings.idleExitMinutes * 60000) close()
+    const state = runtime()
+    if (state.exitAt && Date.now() >= state.exitAt) close()
   }, 1000)
 }
 

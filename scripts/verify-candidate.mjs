@@ -48,7 +48,8 @@ const icon = await helper.file('Assets/BewlyDownload.ico').async('nodebuffer')
 assert.equal(icon.readUInt16LE(4), 9)
 assert.ok(names.some(value => value.includes('classic-level/prebuilds/win32-x64/')))
 const appxManifest = await helper.file('AppxManifest.xml').async('string')
-assert.ok(appxManifest.includes('Version="' + expectedHelperVersion + '.0"'))
+const packageIdentity = (await readFile('native/windows/AppxManifest.xml', 'utf8')).match(/<Identity[^>]+Version="([^"]+)"/)[1]
+assert.ok(appxManifest.includes('Version="' + packageIdentity + '"'))
 async function evidence(name) {
   try { return JSON.parse(await readFile(path.join('dist', name), 'utf8')) }
   catch { return undefined }

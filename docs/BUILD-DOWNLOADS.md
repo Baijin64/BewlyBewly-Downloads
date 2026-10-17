@@ -4,7 +4,7 @@
 
 ## GitHub Actions
 
-CI 在 main 推送或 PR 时检查类型、64 项浏览器测试、应用代码风格，并构建 Chrome ZIP。
+CI 在 main 推送或 PR 时检查类型、浏览器测试、应用代码风格，并构建 Chrome ZIP。
 
 手动运行 **Build connector and Chrome extension** 会同时构建 Chrome ZIP 和 Windows 连接器，执行当前原生测试。Windows 构建从本私有仓库的 build-deps-20220508 Release 获取固定版本的媒体工具，并验证 native/toolchain.json 中的 SHA-256。
 

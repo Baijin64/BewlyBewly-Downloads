@@ -163,7 +163,7 @@ test('framed native host supports the new pending/query/batch/tool protocol end 
   const request = (method, params = {}) => new Promise((resolve, reject) => {
     const requestId = ++sequence, timeout = setTimeout(() => reject(new Error('Native protocol timed out')), 5000)
     awaiting.set(requestId, reply => { clearTimeout(timeout); reply.ok ? resolve(reply.result) : reject(new Error(reply.error)) })
-    const body = Buffer.from(JSON.stringify({ method, params, requestId })), prefix = Buffer.alloc(4); prefix.writeUInt32LE(body.length)
+    const body = Buffer.from(JSON.stringify({ method, params, requestId, allowStart: method === 'health' })), prefix = Buffer.alloc(4); prefix.writeUInt32LE(body.length)
     child.stdin.write(Buffer.concat([prefix, body]))
   })
   const health = await request('health')

@@ -95,7 +95,7 @@ public static class NodeRuntime
         return directory;
     }
     static string Hash(string file) { using (var sha = SHA256.Create()) using (var stream = File.OpenRead(file)) return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant(); }
-    public static string ServiceEnvironment(string executable, string root, string data)
+    public static string ServiceEnvironment(string executable, string root, string data, string mode = "manual")
     {
         var values = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry pair in Environment.GetEnvironmentVariables()) {
@@ -104,6 +104,7 @@ public static class NodeRuntime
             values[name] = Convert.ToString(pair.Value);
         }
         values["BEWLY_NODE_PATH"] = executable;
+        values["BEWLY_DOWNLOAD_MODE"] = mode;
         values["CLASSIC_LEVEL_PREBUILD"] = PrepareSupport(root, data);
         return string.Join("\0", values.Select(pair => pair.Key + "=" + pair.Value)) + "\0\0";
     }

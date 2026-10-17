@@ -13,7 +13,7 @@ using Microsoft.Win32;
 public static class NativeHost
 {
     const string HostName = "io.bewly.download";
-    const string ConnectorVersion = "0.2.7";
+    const string ConnectorVersion = "0.2.8";
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     static extern int GetCurrentPackageFullName(ref uint length, StringBuilder name);
     [StructLayout(LayoutKind.Sequential)]
@@ -59,7 +59,7 @@ public static class NativeHost
             if (args.Length > 0 && args[0] == "--tray") return TrayHost.Run(Data);
             if (args.Length > 0 && args[0] == "--start-service")
             {
-                WriteOutput(new JavaScriptSerializer().Serialize(new { pid = StartService() }));
+                WriteOutput(new JavaScriptSerializer().Serialize(new { pid = StartServiceForMode(args.Contains("--on-demand") ? "on-demand" : "manual") }));
                 return 0;
             }
             if (args.Length > 0 && args[0] == "--desktop") return Desktop();
@@ -88,9 +88,8 @@ public static class NativeHost
                         runtime = NodeRuntime.Resolve();
                         if (!runtime.ready) return 0;
                     }
-                    StartService(runtime.executable);
+                    StartService(runtime.executable, "manual");
                 }
-                if (args.Length == 0) { DesktopUi.Initialize(); MessageBox.Show("下载助手已连接 Chrome 和 Edge。\n\n回到 BewlyBewly，点击视频上的下载按钮即可。\n下载配置和任务列表都在插件内。", "Bewly 下载助手", MessageBoxButtons.OK, MessageBoxIcon.Information); }
                 return 0;
             }
             var identity = new JavaScriptSerializer().Deserialize<Identity>(File.ReadAllText(Path.Combine(Root, "identity.json")));
@@ -103,8 +102,17 @@ public static class NativeHost
             // replayed unchanged to the existing live bridge, including its ID.
             while ((first = ReadFrame(input)) != null) {
                 var message = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(first));
-                if (runtimeStatus == null || !runtimeStatus.ready) runtimeStatus = NodeRuntime.Resolve();
                 object id = message.ContainsKey("requestId") ? message["requestId"] : null;
+                if (Convert.ToString(message["method"]) == "uiSnapshot") {
+                    try {
+                        string file = Path.Combine(Data, "ui-snapshot.json");
+                        if (new FileInfo(file).Length > 900000) throw new IOException("UI snapshot too large");
+                        object snapshot = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(file));
+                        WriteFrame(output, new { ok = true, requestId = id, result = snapshot });
+                    } catch { WriteFrame(output, new { ok = false, requestId = id, code = "SNAPSHOT_MISSING", error = "本地配置将在首次启动助手时同步" }); }
+                    continue;
+                }
+                if (runtimeStatus == null || !runtimeStatus.ready) runtimeStatus = NodeRuntime.Resolve();
                 if (Convert.ToString(message["method"]) == "bootstrapStatus") {
                     WriteFrame(output, new { ok = true, requestId = id, result = new { connectorVersion = ConnectorVersion, runtime = runtimeStatus } });
                     continue;
@@ -149,13 +157,13 @@ public static class NativeHost
             return 1;
         }
     }
-    static int StartService()
+    static int StartServiceForMode(string mode)
     {
         var runtime = NodeRuntime.Resolve();
         if (!runtime.ready) throw new IOException(runtime.reason);
-        return StartService(runtime.executable);
+        return StartService(runtime.executable, mode);
     }
-    static int StartService(string node)
+    static int StartService(string node, string mode = "manual")
     {
         string entry = Path.Combine(Root, "service-entry.mjs");
         var command = new StringBuilder("\"" + node + "\" --no-warnings \"" + entry + "\"");
@@ -163,7 +171,7 @@ public static class NativeHost
         ProcessInfo result;
         // A long-lived daemon must never inherit the native messaging pipes.
         // Detached Node spawning alone can retain extra inheritable Win32 handles.
-        IntPtr environment = Marshal.StringToHGlobalUni(NodeRuntime.ServiceEnvironment(node, Root, Data));
+        IntPtr environment = Marshal.StringToHGlobalUni(NodeRuntime.ServiceEnvironment(node, Root, Data, mode));
         try {
             if (!CreateProcess(node, command, IntPtr.Zero, IntPtr.Zero, false, 0x08000608, environment, Root, ref startup, out result))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "无法启动独立下载服务");

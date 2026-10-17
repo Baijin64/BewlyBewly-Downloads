@@ -60,7 +60,7 @@ public sealed class TrayHost : ApplicationContext
     }
     void OpenDownloader(bool settings)
     {
-        Process.Start(new ProcessStartInfo("https://www.bilibili.com/?page=Downloads" + (settings ? "&downloadView=settings" : "")) { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo("https://www.bilibili.com/?page=Downloads&downloadConnect=1" + (settings ? "&downloadView=settings" : "")) { UseShellExecute = true });
     }
     void MenuCommand(string action)
     {
@@ -115,7 +115,7 @@ public sealed class TrayHost : ApplicationContext
             if (result.ContainsKey("exiting") && Convert.ToBoolean(result["exiting"])) { ExitThread(); return; }
             failures = 0;
             int pending = Convert.ToInt32(result["pending"]), active = Convert.ToInt32(result["active"]);
-            status.Detail = "待下载 " + pending + " · 下载中 " + active;
+            status.Detail = (result.ContainsKey("mode") && Convert.ToString(result["mode"]) == "on-demand" ? "按需 · " : "常驻 · ") + "待下载 " + pending + " · 下载中 " + active;
             status.Invalidate();
             startItem.Enabled = pending > 0 && !actionBusy;
             pauseItem.Enabled = active > 0 && !actionBusy;

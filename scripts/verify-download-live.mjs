@@ -35,7 +35,7 @@ async function framed(method, params = {}) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Native request timed out')), 15000)
     waiting = reply => { clearTimeout(timeout); reply.ok ? resolve(reply.result) : reject(new Error(reply.error)) }
-    const body = Buffer.from(JSON.stringify({ requestId: ++requestId, method, params }))
+    const body = Buffer.from(JSON.stringify({ requestId: ++requestId, method, params, allowStart: true }))
     const prefix = Buffer.alloc(4); prefix.writeUInt32LE(body.length)
     bridge.stdin.write(Buffer.concat([prefix, body]))
   })

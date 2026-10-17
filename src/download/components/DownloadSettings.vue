@@ -13,6 +13,7 @@ import { downloadPreferences, openDownloader } from '../state'
 import { pickLocalFile } from '../toolClient'
 import type { DownloadOptions, HelperSettings, HelperStatus } from '../types'
 import { normalizeDownloadOptions } from '../types'
+import { helperAutoStart } from '../wake'
 import DownloadMigration from './DownloadMigration.vue'
 import DownloadOptionsForm from './DownloadOptionsForm.vue'
 import SelectionButton from './SelectionButton.vue'
@@ -40,11 +41,11 @@ const featureLabels: Record<
   srt: 'SRT 字幕',
   tools: '辅助工具',
 }
-async function connect() {
+async function connect(probe = false) {
   busy.value = true
   error.value = ''
   try {
-    helper.value = await downloadRequest<HelperStatus>('health')
+    helper.value = await downloadRequest<HelperStatus>('health', { connect: probe })
     if ((helper.value.protocol || 1) < 2)
       throw new Error('完整配置需要 0.2.0 或更新的助手，请更新 MSIX 后重试。')
     form.value = JSON.parse(JSON.stringify(helper.value.settings))
@@ -146,7 +147,7 @@ watch(
   },
   { deep: true },
 )
-onMounted(connect)
+onMounted(() => connect(new URL(location.href).searchParams.get('downloadConnect') === '1'))
 onBeforeUnmount(() => {
   controller.abort()
   clearTimeout(previewTimer)
@@ -166,11 +167,11 @@ onBeforeUnmount(() => {
         title="本地下载助手"
         :desc="
           helper
-            ? `已连接 · v${helper.version}`
+            ? `${helper.deferred ? '按需待连接' : '已连接'} · ${helper.version}`
             : '首次安装 MSIX 后，从开始菜单打开一次完成连接。'
         "
       >
-        <Button :disabled="busy" @click="connect">
+        <Button :disabled="busy" @click="connect(true)">
           {{ busy ? "处理中…" : "检查连接" }}
         </Button>
       </SettingsItem>
@@ -255,7 +256,10 @@ onBeforeUnmount(() => {
         >
           <Radio v-model="form.shutdown" aria-label="全部完成后自动关机" />
         </SettingsItem>
-        <SettingsItem title="空闲退出">
+        <SettingsItem title="允许按需启动助手" desc="实际下载、加入队列或使用本地功能时启动；空闲后自动退出。关闭后会先询问。">
+          <Radio v-model="helperAutoStart" aria-label="允许按需启动助手" />
+        </SettingsItem>
+        <SettingsItem title="Windows 手动启动后的空闲退出" desc="从开始菜单打开助手时默认常驻；浏览器按需启动不受此选项影响。">
           <Select
             v-model="form.idleExitMinutes"
             :options="[

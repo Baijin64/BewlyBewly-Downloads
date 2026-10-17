@@ -29,7 +29,7 @@ async function rpc(method, params = {}) {
 }
 try {
   assert.equal(existsSync(path.join(installedRoot, 'runtime/node.exe')), false)
-  const response = spawnSync(alias, [`chrome-extension://${identity.extensionId}/`], { env, input: frame({ method: 'health', requestId: 1 }), windowsHide: true, timeout: 20000 })
+  const response = spawnSync(alias, [`chrome-extension://${identity.extensionId}/`], { env, input: frame({ method: 'health', requestId: 1, allowStart: true }), windowsHide: true, timeout: 20000 })
   assert.equal(response.status, 0, response.stderr.toString())
   const healthReply = JSON.parse(response.stdout.subarray(4))
   assert.equal(healthReply.ok, true)

@@ -122,7 +122,7 @@ test('Windows DPAPI round-trips synthetic session data', { skip: !existsSync(pat
 
 test('native protocol starts a daemon which survives the bridge exiting', { skip: !existsSync(path.join(helper, 'BewlyDownloadHost.exe')), timeout: 25000 }, async (t) => {
   const directory = await temporary(t)
-  const payload = Buffer.from(JSON.stringify({ method: 'health' }))
+  const payload = Buffer.from(JSON.stringify({ method: 'health', allowStart: true }))
   const prefix = Buffer.alloc(4); prefix.writeUInt32LE(payload.length)
   const child = spawn(path.join(helper, 'BewlyDownloadHost.exe'), [`chrome-extension://${identity.extensionId}/`], { env: { ...process.env, BEWLY_DOWNLOAD_DATA: directory, BEWLY_DOWNLOAD_HEADLESS: '1' }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
   const chunks = []
@@ -163,7 +163,7 @@ test('native host replies on an OPEN input pipe, reuses one daemon, then exits o
   const request = requestId => new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { awaiting.delete(requestId); reject(new Error('Host did not flush its reply while stdin was still open')) }, 4000)
     awaiting.set(requestId, reply => { clearTimeout(timeout); resolve(reply) })
-    const body = Buffer.from(JSON.stringify({ method: 'health', requestId }))
+    const body = Buffer.from(JSON.stringify({ method: 'health', requestId, allowStart: requestId === 1 }))
     const prefix = Buffer.alloc(4); prefix.writeUInt32LE(body.length)
     child.stdin.write(Buffer.concat([prefix, body]))
   })

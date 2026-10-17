@@ -20,6 +20,8 @@ import {
 } from '../state'
 import type { TaskQuery } from '../types'
 import { createVideoToolbarDownload } from '../videoToolbar'
+import { finishHelperWake, helperWakePrompt } from '../wake'
+import HelperWakeDialog from './HelperWakeDialog.vue'
 
 const DownloadDialog = defineAsyncComponent(
   () => import('./DownloadDialog.vue'),
@@ -74,6 +76,7 @@ onMounted(() => {
   }, 1000)
 })
 onBeforeUnmount(() => {
+  finishHelperWake(false)
   clearInterval(timer)
   toolbar.dispose()
   window.removeEventListener('bewly-download-changed', updateCount)
@@ -83,6 +86,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div style="display: contents">
+    <HelperWakeDialog v-if="helperWakePrompt" />
     <DownloadDialog
       v-if="downloadTarget"
       :key="downloadTarget.instanceId"

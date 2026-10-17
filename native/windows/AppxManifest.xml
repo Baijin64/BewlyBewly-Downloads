@@ -6,7 +6,7 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
   IgnorableNamespaces="uap uap5 desktop4 rescap virtualization">
-  <Identity Name="Bewly.DownloadHelper" Publisher="CN=BewlyDownload.Local" Version="0.2.7.0" ProcessorArchitecture="x64" />
+  <Identity Name="Bewly.DownloadHelper" Publisher="CN=BewlyDownload.Local" Version="0.2.8.1" ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>Bewly 下载助手</DisplayName>
     <PublisherDisplayName>Bewly local development</PublisherDisplayName>

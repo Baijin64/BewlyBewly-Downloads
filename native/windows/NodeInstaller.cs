@@ -34,7 +34,7 @@ public static class NodeInstaller
         ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
         var request = (HttpWebRequest)WebRequest.Create(address);
         request.AllowAutoRedirect = false; request.Timeout = 20000; request.ReadWriteTimeout = 20000;
-        request.UserAgent = "BewlyDownload-Setup/0.2.7";
+        request.UserAgent = "BewlyDownload-Setup/0.2.8";
         return request;
     }
     public static async Task<NodeRelease> Release(CancellationToken cancellation)

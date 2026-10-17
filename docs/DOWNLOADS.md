@@ -4,9 +4,11 @@
 
 ## 当前状态
 
-0.44.5 完成保持原 UI 的推荐加载与预览缓存优化：限制补页、取消旧请求、短时缓存、稳定卡片属性与延后加载离屏图片。助手继续使用 0.2.7；详情见 [加载优化与验证](LOADING-OPTIMIZATION.md)。离线观看继续采用下载 MP4 后使用系统播放器。
+0.44.6 / 助手 0.2.8 将下载服务改为按需启动：打开界面不启动 Node 服务，下载、入队或本地操作首次确认后唤起，完成后约 5 秒退出；Windows 手动启动默认常驻。最近记录与配置保留只读快照，轮询不会阻止退出。详见 [后台启动与退出](DOWNLOAD-LIFECYCLE.md)。
 
-当前个人维护测试版为扩展 **0.44.5**、助手 **0.2.7**（协议 2）。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。Chrome ZIP 为 `dist/BewlyBewly-Downloads-0.44.5-Chrome.zip`，另提供签名 CRX 和连接器 MSIX。安装步骤见 [安装说明](INSTALL-DOWNLOADS.md)。
+当前个人维护测试版为扩展 **0.44.6**、助手 **0.2.8**（协议 2）。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。Chrome ZIP 为 `dist/BewlyBewly-Downloads-0.44.6-Chrome.zip`，另提供签名 CRX 和连接器 MSIX。安装步骤见 [安装说明](INSTALL-DOWNLOADS.md)。
+
+此前推荐加载、悬停预览和渲染优化保持，详情见 [加载优化与验证](LOADING-OPTIMIZATION.md)。离线观看继续采用下载 MP4 后使用系统播放器。
 
 感谢 [BewlyBewly 原项目](https://github.com/BewlyBewly/BewlyBewly) 与 [Bilidown 原作者王子周棋洛](https://zhouql.vip/)。本分支独立维护，不代表原作者继续更新。浏览器扩展更新后需要重载；连接器配置和任务继续使用原本机数据目录。
 
@@ -26,9 +28,9 @@
 
 0.2.4 修复首版新菜单实际弹出时右侧裁切的问题：菜单和各行按 DPI 明确分配尺寸，关闭默认文字列的自动收窄。诊断使用与实际托盘相同的菜单控件，本机 150% 下为 402×408 像素，9 个菜单项均处于客户区内。
 
-助手 0.2.7 此前的 41 项原生测试和实际 MSIX 验证证据继续适用，本轮按 SHA-256 确认同一二进制，没有重复运行原生测试。实际 MSIX 已验证系统 Node、FFmpeg 转 MP3、aria2、托盘和管道释放，更新时原记录与设置保持一致。官方 MSI 下载、哈希及 Windows 签名验证通过；缺 Node 机器上的完整 UAC/MSI 交互仍需单独实测。证据见 `dist/native-ui-0.2.7-verification.json` 与 `dist/installed-runtime-0.2.7-verification.json`。
+当前助手 0.2.8 的 49 项原生测试与实际 MSIX 验证通过，包括系统 Node、FFmpeg 转 MP3、aria2、按需退出、托盘和管道释放；升级前后 21 条任务和配置行保持一致。证据见 `dist/installed-runtime-0.2.8-verification.json` 与 `dist/on-demand-0.44.6/`。此前官方 Node MSI 下载、哈希及 Windows 签名验证通过；缺 Node 机器上的完整 UAC/MSI 交互仍需单独实测。
 
-网页下载 UI 保留 0.44.0 的统一选择按钮与开关，本轮改进进度条。64 项扩展测试、类型检查、ESLint 和生产构建通过，CRX3 签名及固定身份检查通过。Edge 本地模拟页验证了浅色蓝、深色紫主题，以及下载列表暂停后保留 62% 并隐藏旧速度；未操作用户真实任务。当前 B 站页面需重载新版后确认，证据见 `dist/download-progress-0.44.1-verification.json`。
+网页下载 UI 保留 0.44.0 的统一选择按钮与开关，以及 0.44.1 的进度条。此前 Edge 本地模拟页验证了浅色蓝、深色紫主题，以及下载列表暂停后保留 62% 并隐藏旧速度；未操作用户真实任务，证据见 `dist/download-progress-0.44.1-verification.json`。当前 0.44.6 的 111 项扩展测试、类型检查、ESLint 和生产构建通过，首次启动确认及取消后的队列行为已在模拟页验证。
 
 此前的最高音质、动态最高画质、命名预设、NFO 说明和默认合集选择继续保留。原生任务、用户设置及旧配置未修改或导入；实际播放优化开关不因 UI 更新而变化。慢网、实际 CDN 切换与重载恢复实测继续按用户决定延后。详见 `docs/DOWNLOAD-PARITY.md` 与 `dist/download-ui-0.44.0-verification.json`。
 
@@ -52,7 +54,7 @@ Hi-Res 使用 FLAC 或 MKV，杜比音轨使用 MKA/MKV；视频与音轨直接�
 
 ## 后台、工具与迁移
 
-关闭浏览器后下载继续。托盘提供打开下载器/设置、开始待下载、暂停、取消关机及退出。支持提示音、可选剪贴板链接监听和空闲退出。
+关闭浏览器后下载继续，按需服务完成处理后退出。托盘随服务存在，提供打开下载器/设置、开始待下载、暂停、取消关机及退出。支持提示音、可选剪贴板链接监听和空闲退出；需要持续监听剪贴板时从 Windows 手动启动常驻。
 
 自动关机默认关闭。开启后，本轮任务必须全部成功、无附件警告、待下载和暂停列表为空，且没有辅助工具正在处理，才进入 30 秒可取消倒计时。取消后本轮不再自行安排关机。
 

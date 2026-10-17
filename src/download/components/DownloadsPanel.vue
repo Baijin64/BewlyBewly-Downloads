@@ -47,7 +47,7 @@ let timer: ReturnType<typeof setInterval> | undefined
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
-async function refresh() {
+async function refresh(probe = false) {
   if (loading.value || disposed)
     return
   loading.value = true
@@ -58,6 +58,7 @@ async function refresh() {
       search: search.value,
       page: page.value,
       pageSize: 50,
+      connect: probe,
     })
     if (!disposed && current === generation) {
       data.value = result
@@ -195,7 +196,7 @@ function editSelection() {
 }
 onMounted(async () => {
   try {
-    const health = await downloadRequest<HelperStatus>('health')
+    const health = await downloadRequest<HelperStatus>('health', { connect: new URL(location.href).searchParams.get('downloadConnect') === '1' })
     if ((health.protocol || 1) < 2) {
       throw new Error(
         '请更新至 0.2.0 或更高版本的下载助手，以使用持久队列和批量管理。',
@@ -225,6 +226,9 @@ onBeforeUnmount(() => {
         {{ label }} <span>{{ data.counts[value] }}</span>
       </SelectionButton>
     </nav>
+    <p v-if="data.offline" class="hint">
+      助手未连接，显示最近同步的记录{{ data.syncedAt ? `（${new Date(data.syncedAt).toLocaleString()}）` : '' }}。开始下载时按需启动；“刷新”只连接已经运行的助手。
+    </p>
     <div class="actions">
       <input
         v-model="search"
@@ -233,7 +237,7 @@ onBeforeUnmount(() => {
         aria-label="搜索下载任务"
         @keydown.stop
       >
-      <Button size="small" :disabled="loading" @click="refresh">
+      <Button size="small" :disabled="loading" @click="refresh(true)">
         刷新
       </Button>
       <Button

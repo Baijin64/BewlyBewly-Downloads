@@ -2,6 +2,7 @@ const values = {}
 const recommend = page => ({ code: 0, data: { item: Array.from({ length: 30 }, (_, index) => ({ id: (page - 1) * 30 + index + 1, bvid: 'BV' + String((page - 1) * 30 + index + 1).padStart(10, '0'), title: `加载性能验收 · 示例视频 ${String((page - 1) * 30 + index + 1).padStart(2, '0')}`, pic: 'https://i2.hdslb.com/bfs/archive/1ada8c32a9d168e4b2ee3e010f24789ba3353785.jpg', duration: 180, owner: { name: '示例 UP 主', face: 'https://i2.hdslb.com/bfs/archive/1ada8c32a9d168e4b2ee3e010f24789ba3353785.jpg', mid: 12345 }, stat: { view: 12345, danmaku: 123 }, pubdate: 1792108800, cid: 42 })) } })
 export const storage = { local: { async get(key) { return { [key]: values[key] } }, async set(data) { Object.assign(values, data) }, async remove(key) { delete values[key] } }, onChanged: { addListener() {}, removeListener() {} } }
 let installed = true
+let serviceRunning = false
 let playbackEnabled = false
 export function setInstalled(value) { installed = value }
 const options = { quality: 0, codec: 'auto', audioQuality: 'auto', mode: 'video', cover: false, subtitles: false, outputs: ['video'], subtitleLanguages: [], filenameTemplate: '%title% [%bv%-%cid%]', folderTemplate: '', createFolder: false, createFolderAddIndex: false }
@@ -27,6 +28,8 @@ export default {
   runtime: {
     getURL(path) { return '/' + path },
     async sendMessage({ method, params, bewlyPlayback, bewlyResource, contentScriptQuery, ...rest }) {
+      // Chromium messages serialize Vue proxies before crossing the process boundary.
+      params = params === undefined ? {} : JSON.parse(JSON.stringify(params))
       if (bewlyResource) {
         if (method === 'cancel') return { ok: true }
         await new Promise(resolve => setTimeout(resolve, 120))
@@ -43,14 +46,23 @@ export default {
       await new Promise(resolve => setTimeout(resolve, 80))
       if (!installed) return { ok: false, error: '请先安装 Bewly 下载助手，并从开始菜单打开一次完成浏览器连接。然后点击重试。' }
       let result
-      if (method === 'health') result = { version: '0.2.2', protocol: 2, capabilities: ['audio-highest'], engineInstalled: true, settings }
+      if (method === 'authorizeStart') {
+        values['bewly-native-autostart'] = 'true'
+        return { ok: true, result: { allowed: true } }
+      }
+      const readOnly = ['health', 'inspect', 'inspectFormats', 'inspectQualities', 'inspectSubtitles', 'queryTasks', 'listTasks', 'previewPath'].includes(method)
+      if (!readOnly && !serviceRunning) {
+        if (values['bewly-native-autostart'] !== 'true') return { ok: false, code: 'HELPER_START_REQUIRED', error: '需要启动本地下载助手' }
+        serviceRunning = true
+      }
+      if (method === 'health') result = { version: '0.2.8', protocol: 2, capabilities: ['audio-highest', 'on-demand'], deferred: !serviceRunning, engineInstalled: true, settings }
       else if (method === 'inspect') {
         const bvid = params.video
         result = { bvid, title: bvid === 'BV1GJ411x7h7' ? '从网页到本地：建立自己的视频资料库' : '合集、分 P 与队列', author: '示例 UP 主', collection, pages: bvid === 'BV1GJ411x7h7' ? [{ cid: 42, page: 1, title: '插件与下载核心', duration: 120 }, { cid: 43, page: 2, title: '字幕与视频合并', duration: 180 }] : [{ cid: bvid === 'BV17x411w7KC' ? 44 : 45, page: 1, title: '完整教程', duration: 120 }] }
       }
       else if (method === 'queryTasks') {
         const filtered = tasks.filter(task => (!groups[params.tab] || groups[params.tab].includes(task.status)) && (!params.search || task.title.includes(params.search)))
-        result = { items: filtered.slice(((params.page || 1) - 1) * (params.pageSize || 50), (params.page || 1) * (params.pageSize || 50)), total: filtered.length, page: params.page || 1, pageSize: params.pageSize || 50, counts: Object.fromEntries(Object.entries(groups).map(([key, states]) => [key, tasks.filter(task => states.includes(task.status)).length])) }
+        result = { items: filtered.slice(((params.page || 1) - 1) * (params.pageSize || 50), (params.page || 1) * (params.pageSize || 50)), total: filtered.length, page: params.page || 1, pageSize: params.pageSize || 50, counts: Object.fromEntries(Object.entries(groups).map(([key, states]) => [key, tasks.filter(task => states.includes(task.status)).length])), offline: !serviceRunning, syncedAt: '2026-10-16T14:36:00Z' }
       }
       else if (method === 'inspectFormats') result = params.video === 'BV1GJ411x7h7' ? { video: [{ quality: 80, codec: 7 }, { quality: 80, codec: 12 }], audio: [{ id: 30216, bandwidth: 64000 }, { id: 30280, bandwidth: 192000 }] } : { video: [{ quality: 127, codec: 13 }, { quality: 126, codec: 12 }, { quality: 80, codec: 7 }], audio: [{ id: 30280, bandwidth: 192000 }, { id: 30250, bandwidth: 256000 }, { id: 30251, bandwidth: 1000000 }] }
       else if (method === 'inspectQualities') result = params.video === 'BV1GJ411x7h7' ? [{ quality: 80, codec: 7 }, { quality: 80, codec: 12 }] : [{ quality: 127, codec: 13 }, { quality: 126, codec: 12 }, { quality: 80, codec: 7 }]

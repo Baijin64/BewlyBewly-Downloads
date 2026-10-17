@@ -104,6 +104,8 @@ export interface HelperSettings {
   tray: boolean
 }
 export interface HelperStatus {
+  deferred?: boolean
+  runtime?: HelperRuntime
   version: string
   storageError?: string
   protocol?: number
@@ -112,6 +114,8 @@ export interface HelperStatus {
   engineInstalled: boolean
 }
 export interface TaskQuery {
+  offline?: boolean
+  syncedAt?: string
   items: DownloadTask[]
   storageError?: string
   total: number
@@ -119,5 +123,11 @@ export interface TaskQuery {
   pageSize: number
   counts: { pending: number, active: number, completed: number, failed: number }
 }
-export type DownloadMethod = 'health' | 'inspect' | 'inspectSubtitles' | 'inspectQualities' | 'inspectFormats' | 'createTasks' | 'stageTasks' | 'listTasks' | 'queryTasks' | 'taskAction' | 'batchAction' | 'configure' | 'previewPath' | 'taskFile' | 'tool' | 'migrationPreview' | 'migrationImport'
-export type DownloadReply<T> = { ok: true, result: T } | { ok: false, error: string }
+export type DownloadMethod = 'authorizeStart' | 'health' | 'inspect' | 'inspectSubtitles' | 'inspectQualities' | 'inspectFormats' | 'createTasks' | 'stageTasks' | 'listTasks' | 'queryTasks' | 'taskAction' | 'batchAction' | 'configure' | 'previewPath' | 'taskFile' | 'tool' | 'migrationPreview' | 'migrationImport'
+export interface HelperRuntime {
+  running: boolean
+  mode: 'manual' | 'on-demand'
+  state: 'busy' | 'idle' | 'stopped'
+  exitAt?: number
+}
+export type DownloadReply<T> = { ok: true, result: T, runtime?: HelperRuntime } | { ok: false, error: string, code?: string }

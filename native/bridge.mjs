@@ -11,6 +11,22 @@ const dataDirectory = process.env.BEWLY_DOWNLOAD_DATA || path.join(process.env.L
 const methods = new Set(['health', 'configure', 'inspect', 'expandLink', 'createTasks', 'stageTasks', 'listTasks', 'queryTasks', 'taskAction', 'batchAction', 'previewPath', 'taskFile', 'tool', 'migrationPreview', 'migrationImport'])
 let connecting
 let retryAfter = 0
+let servicePid
+let dispatching = 0
+function writeReply(result) {
+  const payload = Buffer.from(JSON.stringify(result))
+  const prefix = Buffer.alloc(4); prefix.writeUInt32LE(payload.length)
+  process.stdout.write(Buffer.concat([prefix, payload]))
+}
+const serviceWatcher = setInterval(() => {
+  if (!servicePid || dispatching || isRunning(servicePid)) return
+  try { writeReply({ event: 'serviceStopped', snapshot: JSON.parse(readFileSync(path.join(dataDirectory, 'ui-snapshot.json'), 'utf8')) }) } catch {}
+  clearInterval(serviceWatcher)
+  process.stdin.destroy()
+  process.stdout.end()
+  process.exitCode = 0
+}, 1000)
+serviceWatcher.unref()
 
 function rpc(descriptor, message, timeout) {
   return new Promise((resolve, reject) => {
@@ -35,33 +51,35 @@ function isRunning(pid) {
   try { process.kill(pid, 0); return true } catch { return false }
 }
 
-async function connect() {
+async function connect(allowStart) {
   if (connecting) return connecting
-  connecting = startOrConnect().finally(() => { connecting = undefined })
+  connecting = startOrConnect(allowStart).finally(() => { connecting = undefined })
   return connecting
 }
 
-async function startOrConnect() {
-  mkdirSync(dataDirectory, { recursive: true })
+async function startOrConnect(allowStart) {
   const probe = async () => {
     const descriptor = JSON.parse(readFileSync(path.join(dataDirectory, 'connection.json'), 'utf8'))
     const response = await rpc(descriptor, { method: 'health' }, 1000)
     if (!response.ok) throw new Error('下载服务未就绪')
+    servicePid = descriptor.pid
     return descriptor
   }
   try { return await probe() } catch {}
+  if (!allowStart) { const error = new Error('下载助手当前未运行'); error.code = 'SERVICE_OFFLINE'; throw error }
+  mkdirSync(dataDirectory, { recursive: true })
   if (Date.now() < retryAfter) throw new Error('下载助手暂时未就绪，请稍后重试；不会重复启动进程')
-  let serviceRunning = false
-  try { serviceRunning = isRunning(Number(readFileSync(path.join(dataDirectory, 'service.lock'), 'utf8'))) } catch {}
   let startedPid
-  if (!serviceRunning) {
-    const launch = spawnSync(path.join(root, 'BewlyDownloadHost.exe'), ['--start-service'], { windowsHide: true, encoding: 'utf8', env: process.env, timeout: 10000 })
-    if (launch.status !== 0 || launch.error) throw new Error('无法启动独立下载服务，请重新安装助手')
-    try { startedPid = JSON.parse(launch.stdout).pid } catch { throw new Error('下载服务启动结果无效') }
-  }
   for (let attempt = 0; attempt < 100; attempt++) {
-    await delay(100)
     try { return await probe() } catch {}
+    let serviceRunning = false
+    try { serviceRunning = isRunning(Number(readFileSync(path.join(dataDirectory, 'service.lock'), 'utf8'))) } catch {}
+    if (!startedPid && !serviceRunning) {
+      const launch = spawnSync(path.join(root, 'BewlyDownloadHost.exe'), ['--start-service', '--on-demand'], { windowsHide: true, encoding: 'utf8', env: process.env, timeout: 10000 })
+      if (launch.status !== 0 || launch.error) throw new Error('无法启动独立下载服务，请重新安装助手')
+      try { startedPid = JSON.parse(launch.stdout).pid } catch { throw new Error('下载服务启动结果无效') }
+    }
+    await delay(100)
   }
   retryAfter = Date.now() + 15000
   if (startedPid && isRunning(startedPid)) process.kill(startedPid)
@@ -71,8 +89,13 @@ async function startOrConnect() {
 async function dispatch(message) {
   if (message.method === 'bootstrapStatus') return { ok: true, result: { connectorVersion: VERSION, runtime: { ready: true, version: process.versions.node, architecture: process.arch, executable: process.execPath } } }
   if (!methods.has(message.method)) throw new Error('未知下载操作')
-  const descriptor = await connect()
-  return rpc(descriptor, message, 60000)
+  const descriptor = await connect(message.allowStart === true)
+  const result = await rpc(descriptor, message, 60000)
+  if (result.code === 'SERVICE_STOPPING' && message.allowStart === true) {
+    await delay(200)
+    return rpc(await connect(true), message, 60000)
+  }
+  return result
 }
 
 // Only framed protocol responses go to stdout; diagnostics belong on stderr.
@@ -92,8 +115,14 @@ process.stdin.on('data', (chunk) => {
       try {
         const message = JSON.parse(body.toString('utf8'))
         requestId = message.requestId
-        result = await dispatch(message)
-      } catch (error) { result = { ok: false, error: error.message } }
+        dispatching++
+        try { result = await dispatch(message) } finally { dispatching-- }
+      } catch (error) {
+        result = { ok: false, error: error.message, ...(error.code ? { code: error.code } : {}) }
+        if (error.code === 'SERVICE_OFFLINE') {
+          try { result.snapshot = JSON.parse(readFileSync(path.join(dataDirectory, 'ui-snapshot.json'), 'utf8')) } catch {}
+        }
+      }
       if (requestId !== undefined) result = { ...result, requestId }
       let payload = Buffer.from(JSON.stringify(result))
       if (payload.length > 1000000) payload = Buffer.from(JSON.stringify({ ok: false, error: '任务列表过大' }))

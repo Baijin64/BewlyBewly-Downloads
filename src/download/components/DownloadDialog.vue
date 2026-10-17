@@ -90,7 +90,7 @@ function partiallyChecked(row: SelectionRow) {
 const helperUpdateRequired = computed(() => options.value.audioQuality === 'auto' && options.value.outputs.some(kind => ['video', 'audio', 'mp3'].includes(kind)) && !helper.value?.capabilities?.includes('audio-highest'))
 async function checkHelperUpdate() {
   try {
-    helper.value = await downloadRequest<HelperStatus>('health')
+    helper.value = await downloadRequest<HelperStatus>('health', { connect: true })
   }
   catch (err) {
     error.value = String((err as Error).message)
@@ -173,7 +173,7 @@ async function load() {
         '这些功能需要 0.2.0 或更新的下载助手，请更新 MSIX 后重试。',
       )
     }
-    if (!helper.value.engineInstalled)
+    if (!helper.value.deferred && !helper.value.engineInstalled)
       throw new Error('下载引擎缺失，请重新安装下载助手')
     const videos: DownloadVideo[] = []
     const chosen = new Set<string>()
@@ -360,10 +360,14 @@ async function submit(start: boolean) {
       window.dispatchEvent(new Event('bewly-download-changed'))
     }
     catch (err) {
+      if ((err as Error)?.name === 'AbortError') {
+        stopped.value = true
+        break
+      }
       errors.value.push(`${bvid}：${String((err as Error).message)}`)
     }
   }
-  if (remember.value) {
+  if (remember.value && added > 0) {
     downloadPreferences.value = normalizeDownloadOptions(options.value)
     try {
       await downloadRequest('configure', {
@@ -428,6 +432,9 @@ onBeforeUnmount(() => {
         </div>
       </template>
       <template v-else-if="info">
+        <p v-if="helper?.deferred" class="hint">
+          下载界面已就绪；开始下载或加入队列时，会按需连接本地助手。
+        </p>
         <div>
           <h3>{{ sources.length > 1 ? `批量选择（${sources.length} 个链接）` : info.title }}</h3>
           <p class="hint">

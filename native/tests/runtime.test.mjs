@@ -61,7 +61,7 @@ test('bootstrap and missing-runtime errors work without Node, a daemon or user d
 
 test('bootstrap-to-live bridge preserves frames and uses the selected system Node for the daemon', async t => {
   const directory = await temporary(t), data = path.join(directory, 'data')
-  const input = Buffer.concat([frame({ method: 'bootstrapStatus', requestId: 1 }), frame({ method: 'health', requestId: 2 }), frame({ method: 'bootstrapStatus', requestId: 3 })])
+  const input = Buffer.concat([frame({ method: 'bootstrapStatus', requestId: 1 }), frame({ method: 'health', requestId: 2, allowStart: true }), frame({ method: 'bootstrapStatus', requestId: 3 })])
   const result = invoke([origin], { BEWLY_NODE_PATH: process.execPath, BEWLY_DOWNLOAD_DATA: data, BEWLY_DOWNLOAD_HEADLESS: '1', NODE_OPTIONS: '--require=Z:/must-not-load.cjs' }, input)
   assert.equal(result.status, 0, result.stderr.toString())
   const output = replies(result.stdout)

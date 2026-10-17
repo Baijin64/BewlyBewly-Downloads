@@ -9,7 +9,7 @@
 打开本仓库的 [Releases](https://github.com/Baijin64/BewlyBewly-Downloads/releases)。私有仓库需要先登录有访问权限的 GitHub 账号。
 
 - Chrome/Edge 扩展：选择名称含 Chrome 或 Downloads 的 ZIP，解压到打算长期保留的文件夹。
-- 本地连接器：下载 Bewly-DownloadHelper-0.2.7-x64.msix。
+- 本地连接器：下载 Bewly-DownloadHelper-0.2.8-x64.msix。
 - 其他电脑首次安装 MSIX 时，按 Windows 提示信任随包提供的 BewlyDownload-Development.cer。它是公开证书，不含私钥；只应在你了解并信任维护者时导入。也可自行构建并用自己的代码签名证书签名。
 
 开发证书说明可参考 [Microsoft 的包签名文档](https://learn.microsoft.com/en-us/windows/msix/package/create-certificate-package-signing)。本仓库不会自动更改浏览器安全策略或在后台导入证书。
@@ -28,7 +28,9 @@ CRX 签名和固定 ID 已检查，但本项目尚未通过 Chrome Web Store/Edg
 
 1. 安装 MSIX，然后从开始菜单打开“Bewly 下载助手”一次，完成当前用户的 Chrome/Edge Native Messaging 注册。
 2. 有兼容的 Node.js 24+ x64 时直接启动。缺少或不兼容时，在本地窗口点击“下载并安装 Node.js”，完成 Windows 安装授权。
-3. 回到 B 站下载界面，点击重试连接；任务与设置保存在本机。
+3. 回到 B 站下载界面，点击下载或加入待下载，首次同意按需启动；任务与设置保存在本机。
+
+网页下载界面可直接打开，配置与最近记录使用本地快照，不为查看界面启动 Node 下载服务。实际执行下载、入队、修改本地配置或文件操作时才唤起；没有正在处理的任务后约 5 秒自动退出，托盘与下载引擎一起结束。Windows 手动启动默认常驻，退出安装后的首次手动会话后即可按需使用。设置中可撤回自动唤起许可；查看历史时的“刷新”只连接已经运行的助手。详见 [启动与退出规则](DOWNLOAD-LIFECYCLE.md)。
 
 FFmpeg 和 aria2 随连接器提供。Node 安装程序下载后会校验 SHA-256 与 Windows 签名，临时 MSI 会清理；系统 Node 和已安装连接器保留供后续调用。
 
@@ -36,6 +38,6 @@ FFmpeg 和 aria2 随连接器提供。Node 安装程序下载后会校验 SHA-25
 
 ## 更新与验证范围
 
-浏览器扩展与连接器分别更新。当前连接器 0.2.7 已在维护者电脑验证系统 Node、下载后台、FFmpeg/aria2 和托盘；缺 Node 环境的完整 UAC/MSI 安装交互仍需单独验收。播放优化的真实慢网/CDN 切换测试仍保留到后续。
+浏览器扩展与连接器分别更新。0.44.6 的按需启动需要连接器 0.2.8，已有用户更新 MSIX 后重载扩展、刷新 B 站。缺 Node 环境的完整 UAC/MSI 安装交互仍需单独验收。播放优化的真实慢网/CDN 切换测试仍保留到后续。
 
 本分支没有内置 AI 模型，也不会因为下载功能将视频上传到 AI 服务。

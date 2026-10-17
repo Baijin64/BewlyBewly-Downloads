@@ -1,9 +1,10 @@
 import browser from 'webextension-polyfill'
 
 import type { DownloadReply } from '../download/types'
+import { markHelperOffline, rememberReply } from './downloadCache'
 
 let port: browser.Runtime.Port | undefined
-let active: { id: number, resolve: (reply: DownloadReply<unknown>) => void, reject: (error: Error) => void, timeout: ReturnType<typeof setTimeout> } | undefined
+let active: { id: number, method: unknown, resolve: (reply: DownloadReply<unknown>) => void, reject: (error: Error) => void, timeout: ReturnType<typeof setTimeout> } | undefined
 let sequence = 0
 let queued = 0
 let chain: Promise<unknown> = Promise.resolve()
@@ -22,18 +23,34 @@ function ensurePort() {
   const connection = browser.runtime.connectNative('io.bewly.download')
   port = connection
   connection.onMessage.addListener((reply) => {
+    if (connection === port && reply.code === 'SERVICE_OFFLINE' && reply.snapshot)
+      void rememberReply('uiSnapshot', { ok: true, result: reply.snapshot })
+    if (connection === port && reply.event === 'serviceStopped') {
+      markHelperOffline()
+      if (reply.snapshot)
+        void rememberReply('uiSnapshot', { ok: true, result: reply.snapshot })
+      if (active) {
+        clearTimeout(active.timeout)
+        active.resolve({ ok: false, code: 'SERVICE_OFFLINE', error: '下载助手已空闲退出' })
+        active = undefined
+      }
+      disconnect()
+      return
+    }
     if (connection !== port || !active || reply.requestId !== active.id)
       return
     const pending = active
     active = undefined
     clearTimeout(pending.timeout)
     pending.resolve(reply)
-    idleTimer = setTimeout(disconnect, 15000)
+    const idle = pending.method === 'uiSnapshot' || (!reply.ok && reply.code) || (reply.runtime?.mode === 'on-demand' && reply.runtime.state === 'idle')
+    idleTimer = setTimeout(disconnect, idle ? 500 : 15000)
   })
   connection.onDisconnect.addListener(() => {
     if (connection !== port)
       return
     port = undefined
+    markHelperOffline()
     clearTimeout(idleTimer)
     const detail = browser.runtime.lastError?.message || '下载助手连接中断'
     if (active) {
@@ -61,7 +78,7 @@ export function requestNativeDownload(message: Record<string, unknown>): Promise
       disconnect()
       reject(new Error('下载助手通信超时，连接已关闭以防止进程累积。请更新到 0.1.2 或更高版本后重试。'))
     }, 15000)
-    active = { id, resolve, reject, timeout }
+    active = { id, method: message.method, resolve, reject, timeout }
     try {
       ensurePort().postMessage({ ...message, requestId: id })
     }
