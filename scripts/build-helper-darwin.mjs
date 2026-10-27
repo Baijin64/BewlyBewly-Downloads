@@ -5,12 +5,12 @@ import path from 'node:path'
 
 const SKIP_DIRS = /(^|\/)(test|tests|benchmark|benchmarks|example|examples|deps|src|types)(\/|$)/
 const SKIP_FILE = /\.(cc|cpp|h|gyp|gypi|map|ts)$/
-const APP_NAME = 'Bewly 下载助手.app'
+const APP_NAME = 'BewlyDownload.app'
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', ...options })
   if (result.status !== 0) {
-    const detail = String(result.stderr || result.stdout || '').trim()
+    const detail = `${result.stderr || ''}${result.stdout || ''}`.trim()
     throw new Error(`${command} 失败（${result.status}）：${detail}`)
   }
   if (result.stdout) process.stdout.write(result.stdout)
@@ -126,7 +126,7 @@ export async function buildDarwin({ repoRoot, target, bin, stageOnly, out, clean
     path.join(contents, 'Resources', 'native', 'node_modules', 'classic-level', 'prebuilds', 'darwin-x64+arm64', 'classic-level.node'),
   ]
   for (const file of nested) if (existsSync(file)) run('codesign', ['--force', '--sign', '-', file])
-  run('codesign', ['--force', '--sign', '-', '--identifier', 'io.bewly.download.helper', path.join(delivery, APP_NAME)])
+  run('codesign', ['--force', '--deep', '--sign', '-', '--identifier', 'io.bewly.download.helper', path.join(delivery, APP_NAME)])
   run('codesign', ['--verify', '--strict', '--verbose=2', path.join(delivery, APP_NAME)])
 
   const zip = path.join(repoRoot, 'dist', `Bewly-DownloadHelper-${version}-macos-${arch}.zip`)

@@ -16,16 +16,16 @@
 
 ## macOS
 
-1. 解压 `Bewly-DownloadHelper-<版本>-macos-arm64.zip`，把「Bewly 下载助手.app」拖进 `/Applications`。
+1. 解压 `Bewly-DownloadHelper-<版本>-macos-arm64.zip`，把「BewlyDownload.app」拖进 `/Applications`。
 2. 首次打开：由于未做公证，macOS 15+ 需在「系统设置 → 隐私与安全性」点「仍要打开」；也可执行
-   `xattr -dr com.apple.quarantine "/Applications/Bewly 下载助手.app"`。
+   `xattr -dr com.apple.quarantine "/Applications/BewlyDownload.app"`。
 3. App 首次运行会：校验/安装 Node 24 到 `~/Library/Application Support/BewlyDownload/runtime`、写入 Chrome/Edge/Chromium/Brave 的原生消息清单、启动后台服务与菜单栏图标。
 4. 重启浏览器，在扩展中点击连接。
 
 排障：
 
 - 菜单栏没有图标 → `~/Library/Application Support/BewlyDownload/logs/` 查看日志，或手动执行
-  `"/Applications/Bewly 下载助手.app/Contents/Resources/native/posix/launcher.sh" status`。
+  `"/Applications/BewlyDownload.app/Contents/Resources/native/posix/launcher.sh" status`。
 - 扩展提示未连接 → 确认清单存在：
   `ls ~/Library/Application\ Support/Google/Chrome/NativeMessagingHosts/`。
 
