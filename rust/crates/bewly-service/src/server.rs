@@ -35,6 +35,7 @@ pub struct ServiceState {
     pub lifetime: SharedLifetime,
     pub active_requests: AtomicUsize,
     pub tray: std::sync::Mutex<Option<std::process::Child>>,
+    pub running: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
 }
 
 impl ServiceState {
@@ -58,6 +59,7 @@ impl ServiceState {
             lifetime: SharedLifetime::new(mode),
             active_requests: AtomicUsize::new(0),
             tray: std::sync::Mutex::new(None),
+            running: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -94,7 +96,12 @@ impl ServiceState {
     /// Mirrors `lifetime.snapshot()`: busy tasks or in-flight requests suppress
     /// the idle exit, and `exitAt` is only present when an exit is pending.
     pub fn runtime(&self) -> Value {
-        let busy = self.active_requests.load(Ordering::Relaxed) > 0
+        let busy = self
+            .running
+            .lock()
+            .map(|map| !map.is_empty())
+            .unwrap_or(false)
+            || self.active_requests.load(Ordering::Relaxed) > 0
             || self.tasks().iter().any(|task| {
                 matches!(
                     task.get("status").and_then(Value::as_str).unwrap_or(""),
@@ -768,6 +775,7 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
     let token = state.token.clone();
     state.save_snapshot();
     ensure_tray(&state);
+    crate::worker::spawn(state.clone());
     let housekeeping = state.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));

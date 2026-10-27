@@ -8,5 +8,6 @@ pub mod server;
 pub mod settings;
 pub mod tasks;
 pub mod tools;
+pub mod worker;
 
 pub use server::run;

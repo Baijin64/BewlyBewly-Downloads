@@ -300,6 +300,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bewly-media"
+version = "0.3.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "bewly-proto"
 version = "0.3.0"
 dependencies = [
@@ -313,6 +320,8 @@ version = "0.3.0"
 dependencies = [
  "axum",
  "bewly-core",
+ "bewly-engine",
+ "bewly-media",
  "bewly-proto",
  "bewly-store",
  "rfd",

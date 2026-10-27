@@ -379,6 +379,70 @@ fn statuses_for(tab: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+/// Builds the naming view for a stored task.
+pub fn view_of(task: &Value, directory: &str) -> bewly_core::naming::TaskView {
+    use bewly_core::naming::{Group, TaskView};
+    let options = validate_options(task.get("options").unwrap_or(&json!({}))).unwrap_or_default();
+    TaskView {
+        title: task
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        part: task
+            .get("part")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        author: task
+            .get("author")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        bvid: task
+            .get("bvid")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        cid: task.get("cid").and_then(Value::as_u64).unwrap_or(0),
+        page: task.get("page").and_then(Value::as_u64).unwrap_or(1) as u32,
+        page_count: task.get("pageCount").and_then(Value::as_u64).unwrap_or(1) as u32,
+        uid: task.get("uid").and_then(Value::as_f64).unwrap_or(0.0),
+        pubdate: task.get("pubdate").and_then(Value::as_f64).unwrap_or(0.0),
+        created_at: task
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        description: task
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        cover: task
+            .get("cover")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        directory: directory.to_string(),
+        group: task.get("group").and_then(|group| {
+            group
+                .get("title")
+                .and_then(Value::as_str)
+                .map(|title| Group {
+                    index: group.get("index").and_then(Value::as_u64).unwrap_or(1) as u32,
+                    title: title.to_string(),
+                    id: group
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                })
+        }),
+        options,
+    }
+}
+
 pub fn counts(tasks: &[Value]) -> Counts {
     let mut result = Counts::default();
     for task in tasks {

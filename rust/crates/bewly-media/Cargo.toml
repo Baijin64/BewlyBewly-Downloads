@@ -1,0 +1,10 @@
+[package]
+name = "bewly-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Media remuxing; the libav backend replaces the external FFmpeg later."
+
+[dependencies]
+thiserror = { workspace = true }

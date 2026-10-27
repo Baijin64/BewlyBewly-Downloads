@@ -11,6 +11,8 @@ axum = "0.8"
 bewly-core = { path = "../bewly-core" }
 bewly-proto = { path = "../bewly-proto" }
 bewly-store = { path = "../bewly-store" }
+bewly-engine = { path = "../bewly-engine" }
+bewly-media = { path = "../bewly-media" }
 rusty-leveldb = "3"
 ureq = { version = "2", features = ["json"] }
 url = "2"
