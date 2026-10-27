@@ -184,6 +184,109 @@ pub fn inspect(value: &str, cookie: &str) -> Result<Value, String> {
     Ok(result)
 }
 
+static WBI_KEYS: std::sync::OnceLock<std::sync::Mutex<Option<(String, String, i64)>>> =
+    std::sync::OnceLock::new();
+
+fn wbi_keys(cookie: &str) -> Result<(String, String), String> {
+    let cache = WBI_KEYS.get_or_init(|| std::sync::Mutex::new(None));
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    if let Some((img, sub, stamp)) = cache.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+        if now - stamp < 3600 {
+            return Ok((img, sub));
+        }
+    }
+    let endpoint = format!("{}/x/web-interface/nav", base().trim_end_matches('/'));
+    let mut request = agent()
+        .get(&endpoint)
+        .set("User-Agent", USER_AGENT)
+        .set("Referer", "https://www.bilibili.com/");
+    if !cookie.is_empty() {
+        request = request.set("Cookie", cookie);
+    }
+    let body: Value = request
+        .call()
+        .map_err(|error| format!("B 站导航接口请求失败（{error}）"))?
+        .into_json()
+        .map_err(|error| format!("B 站导航接口返回了无效内容：{error}"))?;
+    let img = body
+        .pointer("/data/wbi_img/img_url")
+        .and_then(Value::as_str)
+        .and_then(crate::wbi::key_from_url)
+        .ok_or("B 站没有返回签名密钥")?;
+    let sub = body
+        .pointer("/data/wbi_img/sub_url")
+        .and_then(Value::as_str)
+        .and_then(crate::wbi::key_from_url)
+        .ok_or("B 站没有返回签名密钥")?;
+    *cache.lock().unwrap_or_else(|p| p.into_inner()) = Some((img.clone(), sub.clone(), now));
+    Ok((img, sub))
+}
+
+/// Resolves playback streams for a task without a prepared payload.
+pub fn resolve(
+    bvid: &str,
+    cid: u64,
+    quality: u32,
+    audio_quality: &str,
+    outputs: &[String],
+    codec: &str,
+    cookie: &str,
+) -> Result<Value, String> {
+    let (img, sub) = wbi_keys(cookie)?;
+    let mixin = crate::wbi::mixin_key(&img, &sub);
+    let timestamp = time::OffsetDateTime::now_utc().unix_timestamp();
+    let query = crate::wbi::sign(
+        &[
+            ("bvid", bvid.to_string()),
+            ("cid", cid.to_string()),
+            ("qn", (if quality == 0 { 127 } else { quality }).to_string()),
+            ("fnval", "4048".into()),
+            ("fnver", "0".into()),
+            ("fourk", "1".into()),
+        ],
+        &mixin,
+        timestamp,
+    );
+    let endpoint = format!(
+        "{}/x/player/wbi/playurl?{query}",
+        base().trim_end_matches('/')
+    );
+    let mut request = agent()
+        .get(&endpoint)
+        .set("User-Agent", USER_AGENT)
+        .set("Referer", "https://www.bilibili.com/");
+    if !cookie.is_empty() {
+        request = request.set("Cookie", cookie);
+    }
+    let body: Value = request
+        .call()
+        .map_err(|error| format!("B 站播放接口请求失败（{error}）"))?
+        .into_json()
+        .map_err(|error| format!("B 站播放接口返回了无效内容：{error}"))?;
+    let code = body.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    if code != 0 {
+        let message = body
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("请求未成功");
+        return Err(format!("B 站返回 {code}：{message}"));
+    }
+    let data = body.get("data").cloned().unwrap_or_else(|| json!({}));
+    let options = bewly_core::formats::DownloadOptions {
+        quality,
+        codec: codec.to_string(),
+        audio_quality: audio_quality.to_string(),
+        outputs: outputs.to_vec(),
+        ..Default::default()
+    };
+    let streams = bewly_core::formats::select_streams(&data, &options)?;
+    Ok(json!({
+        "video": streams.video,
+        "audio": streams.audio,
+        "preparedAt": time::OffsetDateTime::now_utc().unix_timestamp() * 1000,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

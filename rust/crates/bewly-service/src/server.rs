@@ -36,6 +36,7 @@ pub struct ServiceState {
     pub active_requests: AtomicUsize,
     pub tray: std::sync::Mutex<Option<std::process::Child>>,
     pub running: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
+    pub cookie: std::sync::Mutex<String>,
 }
 
 impl ServiceState {
@@ -60,6 +61,7 @@ impl ServiceState {
             active_requests: AtomicUsize::new(0),
             tray: std::sync::Mutex::new(None),
             running: std::sync::Mutex::new(std::collections::HashMap::new()),
+            cookie: std::sync::Mutex::new(String::new()),
         })
     }
 
@@ -314,7 +316,12 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
                 .get("video")
                 .and_then(Value::as_str)
                 .ok_or("缺少视频链接")?;
-            crate::net::inspect(video, "")
+            let cookie = state
+                .cookie
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            crate::net::inspect(video, &cookie)
         }
         "migrationPreview" => {
             let preview = crate::migration::preview(&state.data_directory, params)?;
@@ -748,6 +755,19 @@ async fn rpc(
             "error": "下载助手正在空闲退出",
         }))
         .into_response();
+    }
+    if let Some(session) = payload.get("session") {
+        match session.as_str() {
+            Some(text) if text.len() <= 32768 && !text.contains(['\r', '\n']) => {
+                *state
+                    .cookie
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = text.to_string();
+            }
+            _ => {
+                return axum::Json(json!({ "ok": false, "error": "无效登录信息" })).into_response()
+            }
+        }
     }
     let read_only = READ_ONLY_METHODS.contains(&method)
         || (method == "tool" && params.get("op").and_then(Value::as_str) == Some("status"));

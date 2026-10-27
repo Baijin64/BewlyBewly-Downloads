@@ -64,10 +64,21 @@ pub fn spawn(state: Arc<ServiceState>) {
                 .into_iter()
                 .rev()
                 .find(|task| {
-                    task.get("status").and_then(Value::as_str) == Some("queued")
-                        // Without a prepared payload the service would have to call
-                        // playurl first, which is not migrated yet; leave it queued.
-                        && task.get("prepared").map(|value| !value.is_null()).unwrap_or(false)
+                    if task.get("status").and_then(Value::as_str) != Some("queued") {
+                        return false;
+                    }
+                    let prepared = task
+                        .get("prepared")
+                        .map(|value| !value.is_null())
+                        .unwrap_or(false);
+                    // Without a session cookie playurl cannot be signed, so the task
+                    // waits instead of failing with an authentication error.
+                    prepared
+                        || !state
+                            .cookie
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .is_empty()
                 })
                 .and_then(|task| task.get("id").and_then(Value::as_str).map(str::to_string));
             let Some(id) = candidate else {
@@ -188,10 +199,34 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
                 return Ok(());
             }
         };
-    let prepared = task.get("prepared").cloned().unwrap_or(Value::Null);
+    let mut prepared = task.get("prepared").cloned().unwrap_or(Value::Null);
     if prepared.is_null() {
-        fail(state, &mut task, "缺少视频解析结果，请重新解析后再下载");
-        return Ok(());
+        let cookie = state
+            .cookie
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let bvid = task.get("bvid").and_then(Value::as_str).unwrap_or("");
+        let cid = task.get("cid").and_then(Value::as_u64).unwrap_or(0);
+        match crate::net::resolve(
+            bvid,
+            cid,
+            options.quality,
+            &options.audio_quality,
+            &options.outputs,
+            &options.codec,
+            &cookie,
+        ) {
+            Ok(value) => {
+                task["prepared"] = value.clone();
+                let _ = state.store().put_task(&task);
+                prepared = value;
+            }
+            Err(error) => {
+                fail(state, &mut task, &error);
+                return Ok(());
+            }
+        }
     }
 
     let workdir = state.data_directory.join("partial").join(id);
