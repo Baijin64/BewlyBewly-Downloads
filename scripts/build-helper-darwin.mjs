@@ -8,8 +8,13 @@ const SKIP_FILE = /\.(cc|cpp|h|gyp|gypi|map|ts)$/
 const APP_NAME = 'Bewly 下载助手.app'
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { stdio: 'inherit', ...options })
-  if (result.status !== 0) throw new Error(`${command} 失败（${result.status}）`)
+  const result = spawnSync(command, args, { encoding: 'utf8', ...options })
+  if (result.status !== 0) {
+    const detail = String(result.stderr || result.stdout || '').trim()
+    throw new Error(`${command} 失败（${result.status}）：${detail}`)
+  }
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
 }
 
 function copyNativeSources(repoRoot, appRoot) {
@@ -126,7 +131,15 @@ export async function buildDarwin({ repoRoot, target, bin, stageOnly, out, clean
   makeIcon(repoRoot, path.join(contents, 'Resources'))
 
   console.log('ad-hoc 签名…')
-  run('codesign', ['--force', '--sign', '-', '--identifier', 'io.bewly.download.tray', path.join(contents, 'MacOS', 'BewlyTray')])
+  // A bundle cannot be signed while it contains unsigned Mach-O files, and --deep
+  // would also sign the runtime that is downloaded later into the data directory.
+  const nested = [
+    path.join(contents, 'MacOS', 'BewlyTray'),
+    path.join(contents, 'Resources', 'native', 'bin', 'aria2c'),
+    path.join(contents, 'Resources', 'native', 'bin', 'ffmpeg'),
+    path.join(contents, 'Resources', 'native', 'node_modules', 'classic-level', 'prebuilds', 'darwin-x64+arm64', 'classic-level.node'),
+  ]
+  for (const file of nested) if (existsSync(file)) run('codesign', ['--force', '--sign', '-', file])
   run('codesign', ['--force', '--sign', '-', '--identifier', 'io.bewly.download.helper', path.join(delivery, APP_NAME)])
   run('codesign', ['--verify', '--strict', '--verbose=2', path.join(delivery, APP_NAME)])
 
