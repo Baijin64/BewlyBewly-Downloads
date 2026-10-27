@@ -58,6 +58,7 @@ impl Store {
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY, data TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS tool_jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL);
              CREATE INDEX IF NOT EXISTS task_status ON tasks(json_extract(data,'$.status'));
              PRAGMA user_version=2;",
         )?;
@@ -138,6 +139,29 @@ impl Store {
         Ok(self
             .connection
             .execute("DELETE FROM tasks WHERE id=?", params![id])?)
+    }
+
+    pub fn put_job(&self, id: &str, job: &Value) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO tool_jobs(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+            params![id, serde_json::to_string(job)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_job(&self, id: &str) -> Result<Option<Value>, StoreError> {
+        let data: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT data FROM tool_jobs WHERE id = ?",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match data {
+            Some(text) => Ok(Some(serde_json::from_str(&text)?)),
+            None => Ok(None),
+        }
     }
 
     pub fn settings(&self) -> Result<Option<Value>, StoreError> {

@@ -192,3 +192,135 @@ fn service_answers_health_and_queries_on_loopback() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+#[allow(clippy::zombie_processes)]
+fn start_service(
+    directory: &std::path::Path,
+    grace_ms: &str,
+) -> (std::process::Child, u16, String) {
+    let child = Command::new(host_binary())
+        .arg("--service")
+        .env("BEWLY_DOWNLOAD_DATA", directory)
+        .env("BEWLY_DOWNLOAD_MODE", "on-demand")
+        .env("BEWLY_IDLE_GRACE_MS", grace_ms)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let descriptor_path = directory.join("connection.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&descriptor_path) {
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                let port = value["port"].as_u64().unwrap() as u16;
+                let token = value["token"].as_str().unwrap().to_string();
+                return (child, port, token);
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "service did not publish a descriptor"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn call(port: u16, token: &str, method: &str, params: Value) -> Value {
+    http_rpc(port, token, &json!({ "method": method, "params": params }))
+}
+
+#[test]
+fn task_lifecycle_tools_and_idle_exit_work_over_rpc() {
+    let directory = temp_directory("lifecycle");
+    let (mut child, port, token) = start_service(&directory, "400");
+
+    let info = json!({
+        "bvid": "BV1xx411c7mD",
+        "title": "测试视频",
+        "author": "UP",
+        "cover": "",
+        "uid": 1,
+        "pubdate": 1700000000,
+        "description": "",
+        "pages": [{ "cid": 11, "page": 1, "title": "P1", "duration": 10 }]
+    });
+    let staged = call(
+        port,
+        &token,
+        "stageTasks",
+        json!({ "info": info, "cids": [11], "options": {} }),
+    );
+    assert_eq!(staged["ok"], true);
+    assert_eq!(staged["result"][0]["status"], "pending");
+    assert!(staged["result"][0].get("prepared").is_none());
+    let id = staged["result"][0]["id"].as_str().unwrap().to_string();
+
+    let started = call(
+        port,
+        &token,
+        "taskAction",
+        json!({ "id": id, "action": "start" }),
+    );
+    assert_eq!(started["result"]["status"], "queued");
+
+    let paused = call(
+        port,
+        &token,
+        "taskAction",
+        json!({ "id": id, "action": "pause" }),
+    );
+    assert_eq!(paused["result"]["status"], "paused");
+
+    let resumed = call(
+        port,
+        &token,
+        "taskAction",
+        json!({ "id": id, "action": "resume" }),
+    );
+    assert_eq!(resumed["result"]["status"], "queued");
+
+    let job = call(
+        port,
+        &token,
+        "tool",
+        json!({ "op": "convertId", "input": "av170001" }),
+    );
+    assert_eq!(job["ok"], true);
+    assert_eq!(job["result"]["status"], "completed");
+    assert_eq!(job["result"]["result"]["text"], "BV17x411w7KC");
+    let job_id = job["result"]["id"].as_str().unwrap().to_string();
+    let status = call(
+        port,
+        &token,
+        "tool",
+        json!({ "op": "status", "id": job_id }),
+    );
+    assert_eq!(status["result"]["status"], "completed");
+
+    let counts = call(port, &token, "queryTasks", json!({ "tab": "all" }));
+    assert_eq!(counts["result"]["counts"]["active"], 1);
+
+    // Cancelling removes the only busy task, so the idle lease starts counting.
+    let cancelled = call(
+        port,
+        &token,
+        "taskAction",
+        json!({ "id": id, "action": "cancel" }),
+    );
+    assert_eq!(cancelled["result"]["status"], "cancelled");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            assert_eq!(status.code(), Some(0));
+            break;
+        }
+        assert!(Instant::now() < deadline, "on-demand service did not exit");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        !directory.join("connection.json").exists(),
+        "descriptor must be removed on exit"
+    );
+}

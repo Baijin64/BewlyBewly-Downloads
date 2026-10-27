@@ -1,7 +1,7 @@
 //! Local RPC server: `POST /rpc` on loopback with bearer auth and no CORS.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use axum::body::Bytes;
@@ -17,8 +17,10 @@ use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 
 use crate::health::{health, PlatformCaps};
+use crate::lifetime::{now_ms, SharedLifetime};
 use crate::settings::{apply, Settings};
 use crate::tasks;
+use crate::tools;
 
 pub struct ServiceState {
     pub data_directory: PathBuf,
@@ -30,6 +32,8 @@ pub struct ServiceState {
     pub last_tray: AtomicI64,
     pub storage_error: String,
     pub caps: PlatformCaps,
+    pub lifetime: SharedLifetime,
+    pub active_requests: AtomicUsize,
 }
 
 impl ServiceState {
@@ -50,6 +54,8 @@ impl ServiceState {
             last_tray: AtomicI64::new(0),
             storage_error: String::new(),
             caps: PlatformCaps::current(),
+            lifetime: SharedLifetime::new(mode),
+            active_requests: AtomicUsize::new(0),
         })
     }
 
@@ -81,6 +87,28 @@ impl ServiceState {
         self.store()
             .put_settings(&value)
             .map_err(|error| error.to_string())
+    }
+
+    /// Mirrors `lifetime.snapshot()`: busy tasks or in-flight requests suppress
+    /// the idle exit, and `exitAt` is only present when an exit is pending.
+    pub fn runtime(&self) -> Value {
+        let busy = self.active_requests.load(Ordering::Relaxed) > 0
+            || self.tasks().iter().any(|task| {
+                matches!(
+                    task.get("status").and_then(Value::as_str).unwrap_or(""),
+                    "queued" | "resolving" | "downloading" | "paused" | "muxing" | "postprocessing"
+                )
+            });
+        let idle_minutes = self.settings().idle_exit_minutes;
+        let runtime = self.lifetime.lock().snapshot(busy, idle_minutes);
+        let mut value = serde_json::Map::new();
+        value.insert("running".into(), Value::Bool(true));
+        value.insert("mode".into(), Value::String(runtime.mode));
+        value.insert("state".into(), Value::String(runtime.state.into()));
+        if let Some(exit_at) = runtime.exit_at {
+            value.insert("exitAt".into(), json!(exit_at));
+        }
+        Value::Object(value)
     }
 
     pub fn save_snapshot(&self) {
@@ -265,103 +293,232 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
                 "shutdownDue": 0,
             }))
         }
-        "taskAction" => {
+        "taskAction" => task_action(state, params),
+        "batchAction" => batch_action(state, params),
+        "tool" => tool_request(state, params),
+        "desktopAction" => desktop_action(state, params),
+        other => Err(format!("未知下载操作：{other}")),
+    }
+}
+
+const READ_ONLY_METHODS: [&str; 4] = ["health", "queryTasks", "listTasks", "desktopState"];
+
+fn status_of(task: &Value) -> &str {
+    task.get("status").and_then(Value::as_str).unwrap_or("")
+}
+
+fn set_status(state: &ServiceState, task: &mut Value, status: &str) -> Result<Value, String> {
+    task["status"] = Value::String(status.to_string());
+    state
+        .store()
+        .put_task(task)
+        .map_err(|error| error.to_string())?;
+    state.save_snapshot();
+    Ok(tasks::public_task(task))
+}
+
+fn task_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
+    let id = params
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("任务不存在")?;
+    let action = params.get("action").and_then(Value::as_str).unwrap_or("");
+    let mut task = state
+        .store()
+        .task(id)
+        .map_err(|error| error.to_string())?
+        .ok_or("任务不存在")?;
+    let status = status_of(&task).to_string();
+    match action {
+        "remove" => {
+            if tasks::ACTIVE_STATES.contains(&status.as_str()) || status == "queued" {
+                return Err("请先暂停任务再移除".into());
+            }
+            state
+                .store()
+                .remove_task(id)
+                .map_err(|error| error.to_string())?;
+            state.save_snapshot();
+            Ok(json!({ "id": id, "removed": true }))
+        }
+        "deleteFiles" => {
+            if tasks::ACTIVE_STATES.contains(&status.as_str()) || status == "queued" {
+                return Err("请先暂停任务再移除".into());
+            }
+            let legacy = task.get("legacyPath").and_then(Value::as_str).unwrap_or("");
+            let output = task.get("output").and_then(Value::as_str).unwrap_or("");
+            if !legacy.is_empty() && output.is_empty() {
+                return Err("旧版记录没有可删除的已核验文件，仅可移除记录".into());
+            }
+            let directory = task.get("directory").and_then(Value::as_str).unwrap_or("");
+            let root = std::path::absolute(directory).map_err(|error| error.to_string())?;
+            let mut files: Vec<String> = Vec::new();
+            if !output.is_empty() {
+                files.push(output.to_string());
+            }
+            if let Some(artifacts) = task.get("artifacts").and_then(Value::as_object) {
+                for value in artifacts.values() {
+                    if let Some(path) = value.as_str() {
+                        if !files.iter().any(|item| item == path) {
+                            files.push(path.to_string());
+                        }
+                    }
+                }
+            }
+            for file in files {
+                let absolute = std::path::absolute(&file).map_err(|error| error.to_string())?;
+                if absolute.strip_prefix(&root).is_err() {
+                    return Err("文件路径超出任务保存目录".into());
+                }
+                let _ = std::fs::remove_file(&absolute);
+            }
+            if let Some(object) = task.as_object_mut() {
+                object.insert("output".into(), Value::Null);
+                object.insert("artifacts".into(), json!({}));
+                object.insert("filesDeleted".into(), Value::Bool(true));
+            }
+            state
+                .store()
+                .put_task(&task)
+                .map_err(|error| error.to_string())?;
+            state.save_snapshot();
+            Ok(tasks::public_task(&task))
+        }
+        "start" => {
+            if status != "pending" {
+                return Err("任务不在待下载列表".into());
+            }
+            task["error"] = Value::String(String::new());
+            set_status(state, &mut task, "queued")
+        }
+        "pause" | "cancel" => {
+            if matches!(status.as_str(), "completed" | "cancelled") {
+                return Ok(tasks::public_task(&task));
+            }
+            if matches!(status.as_str(), "muxing" | "postprocessing") {
+                return Err("正在合并或保存附件，请等待当前步骤结束".into());
+            }
+            task["speed"] = json!(0);
+            set_status(
+                state,
+                &mut task,
+                if action == "pause" {
+                    "paused"
+                } else {
+                    "cancelled"
+                },
+            )
+        }
+        "resume" | "retry" => {
+            if !matches!(status.as_str(), "paused" | "failed" | "cancelled") {
+                return Err("任务当前不能恢复".into());
+            }
+            task["error"] = Value::String(String::new());
+            set_status(state, &mut task, "queued")
+        }
+        _ => Err("无效任务操作".into()),
+    }
+}
+
+fn batch_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
+    let action = params.get("action").and_then(Value::as_str).unwrap_or("");
+    if !matches!(
+        action,
+        "start" | "pause" | "resume" | "retry" | "remove" | "edit"
+    ) {
+        return Err("无效批量操作".into());
+    }
+    let ids: Vec<String> = match params.get("ids").and_then(Value::as_array) {
+        Some(items) => items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_string))
+            .collect(),
+        None => Vec::new(),
+    };
+    if params.get("all").is_some() {
+        let range = params.get("all").and_then(Value::as_str).unwrap_or("");
+        let statuses: &[&str] = match range {
+            "pending" => &["pending"],
+            "active" => &["queued", "resolving", "downloading", "paused"],
+            "failed" => &["failed", "cancelled"],
+            "completed" => &["completed"],
+            _ => return Err("无效批量范围".into()),
+        };
+        let ids: Vec<String> = state
+            .tasks()
+            .iter()
+            .filter(|task| statuses.contains(&status_of(task)))
+            .filter_map(|task| task.get("id").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let mut processed = 0usize;
+        let mut errors: Vec<Value> = Vec::new();
+        for id in &ids {
+            match task_action(state, &json!({ "id": id, "action": action })) {
+                Ok(_) => processed += 1,
+                Err(error) => errors.push(json!({ "id": id, "error": error })),
+            }
+        }
+        return Ok(json!({
+            "processed": processed,
+            "errors": errors.iter().take(100).collect::<Vec<_>>(),
+            "errorCount": errors.len(),
+        }));
+    }
+    if ids.is_empty() || ids.len() > 200 {
+        return Err("无效批量范围".into());
+    }
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+    for id in ids {
+        match task_action(state, &json!({ "id": id, "action": action })) {
+            Ok(result) => results.push(result),
+            Err(error) => errors.push(json!({ "id": id, "error": error })),
+        }
+    }
+    Ok(json!({ "results": results, "errors": errors }))
+}
+
+fn tool_request(state: &ServiceState, params: &Value) -> Result<Value, String> {
+    let op = params.get("op").and_then(Value::as_str).unwrap_or("");
+    match op {
+        "convertId" => {
+            let input = params.get("input").and_then(Value::as_str).unwrap_or("");
+            let store = state.store();
+            tools::convert_job(&store, input)
+        }
+        "status" => {
             let id = params
                 .get("id")
                 .and_then(Value::as_str)
-                .ok_or("任务不存在")?;
-            let action = params.get("action").and_then(Value::as_str).unwrap_or("");
-            let task = state.store().task(id).map_err(|error| error.to_string())?;
-            let Some(mut task) = task else {
-                return Err("任务不存在".into());
-            };
-            match action {
-                "remove" => {
-                    let status = task.get("status").and_then(Value::as_str).unwrap_or("");
-                    if tasks::ACTIVE_STATES.contains(&status) {
-                        return Err("请先暂停任务再移除".into());
-                    }
-                    state
-                        .store()
-                        .remove_task(id)
-                        .map_err(|error| error.to_string())?;
-                    state.save_snapshot();
-                    Ok(json!({ "id": id, "removed": true }))
-                }
-                "start" => {
-                    if task.get("status").and_then(Value::as_str) != Some("pending") {
-                        return Err("任务不在待下载列表".into());
-                    }
-                    task["status"] = Value::String("queued".into());
-                    task["error"] = Value::String(String::new());
-                    state
-                        .store()
-                        .put_task(&task)
-                        .map_err(|error| error.to_string())?;
-                    state.save_snapshot();
-                    Ok(tasks::public_task(&task))
-                }
-                _ => Err("下载功能尚未迁移到 Rust 引擎".into()),
-            }
+                .ok_or("工具任务不存在")?;
+            let store = state.store();
+            tools::load_job(&store, id)?.ok_or_else(|| "工具任务不存在".to_string())
         }
-        "batchAction" => {
-            let action = params.get("action").and_then(Value::as_str).unwrap_or("");
-            if action != "remove" && action != "edit" {
-                return Err("下载功能尚未迁移到 Rust 引擎".into());
-            }
-            let ids: Vec<String> = match params.get("ids").and_then(Value::as_array) {
-                Some(items) => items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect(),
-                None => Vec::new(),
-            };
-            if ids.is_empty() {
-                return Err("无效批量范围".into());
-            }
-            let mut results = Vec::new();
-            let mut errors = Vec::new();
-            for id in ids.iter().take(200) {
-                let Some(mut task) = state.store().task(id).map_err(|error| error.to_string())?
-                else {
-                    errors.push(json!({ "id": id, "error": "任务不存在" }));
-                    continue;
-                };
-                match action {
-                    "remove" => {
-                        let status = task.get("status").and_then(Value::as_str).unwrap_or("");
-                        if tasks::ACTIVE_STATES.contains(&status) {
-                            errors.push(json!({ "id": id, "error": "请先暂停任务再移除" }));
-                            continue;
-                        }
-                        state
-                            .store()
-                            .remove_task(id)
-                            .map_err(|error| error.to_string())?;
-                        results.push(json!({ "id": id, "removed": true }));
-                    }
-                    _ => {
-                        let status = task.get("status").and_then(Value::as_str).unwrap_or("");
-                        if !matches!(status, "pending" | "failed") {
-                            errors.push(json!({ "id": id, "error": "只能修改待下载或失败任务" }));
-                            continue;
-                        }
-                        let options =
-                            validate_options(params.get("options").unwrap_or(&json!({})))?;
-                        task["options"] =
-                            serde_json::to_value(&options).map_err(|error| error.to_string())?;
-                        state
-                            .store()
-                            .put_task(&task)
-                            .map_err(|error| error.to_string())?;
-                        results.push(json!({ "id": id, "options": options }));
-                    }
-                }
-            }
-            state.save_snapshot();
-            Ok(json!({ "results": results, "errors": errors }))
+        "cancel" => Ok(json!({ "cancelled": true })),
+        _ => Err("此工具操作尚未迁移到 Rust 引擎".into()),
+    }
+}
+
+fn desktop_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
+    match params.get("action").and_then(Value::as_str).unwrap_or("") {
+        "keepRunning" => {
+            state.lifetime.lock().manual();
+            Ok(json!({ "mode": "manual" }))
         }
-        other => Err(format!("未知下载操作：{other}")),
+        "cancelShutdown" => Ok(json!({ "cancelled": true })),
+        "exit" => {
+            state.closing.store(true, Ordering::Relaxed);
+            Ok(json!({ "exiting": true }))
+        }
+        action @ ("start" | "pause") => {
+            let range = if action == "start" {
+                "pending"
+            } else {
+                "active"
+            };
+            batch_action(state, &json!({ "action": action, "all": range }))
+        }
+        _ => Err("无效托盘操作".into()),
     }
 }
 
@@ -414,12 +571,16 @@ async fn rpc(
         }))
         .into_response();
     }
-    let runtime = json!({
-        "running": true,
-        "mode": state.mode,
-        "state": if state.closing.load(Ordering::Relaxed) { "stopping" } else { "idle" },
-    });
-    match dispatch(&state, method, &params) {
+    let read_only = READ_ONLY_METHODS.contains(&method)
+        || (method == "tool" && params.get("op").and_then(Value::as_str) == Some("status"));
+    if !read_only {
+        state.lifetime.lock().touch();
+    }
+    state.active_requests.fetch_add(1, Ordering::Relaxed);
+    let result = dispatch(&state, method, &params);
+    state.active_requests.fetch_sub(1, Ordering::Relaxed);
+    let runtime = state.runtime();
+    match result {
         Ok(result) => {
             axum::Json(json!({ "ok": true, "result": result, "runtime": runtime })).into_response()
         }
@@ -435,6 +596,25 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
     let state = Arc::new(ServiceState::open(&data_directory, &mode)?);
     let token = state.token.clone();
     state.save_snapshot();
+    let housekeeping = state.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            ticker.tick().await;
+            let runtime = housekeeping.runtime();
+            if let Some(exit_at) = runtime.get("exitAt").and_then(Value::as_i64) {
+                if now_ms() >= exit_at {
+                    housekeeping.closing.store(true, Ordering::Relaxed);
+                    housekeeping.save_snapshot();
+                    let _ =
+                        std::fs::remove_file(housekeeping.data_directory.join("connection.json"));
+                    // Give the in-flight reply a moment to leave the socket.
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    std::process::exit(0);
+                }
+            }
+        }
+    });
     let app = Router::new()
         .route("/rpc", post(rpc))
         .fallback(fallback)
