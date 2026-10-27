@@ -19,6 +19,7 @@ pub fn extension_for(
     lossless: bool,
     dolby: bool,
     quality: u32,
+    multiple_media: bool,
 ) -> (&'static str, &'static str) {
     let extension = match kind {
         "mp3" => "mp3",
@@ -39,7 +40,12 @@ pub fn extension_for(
             }
         }
     };
-    (extension, if kind == "silent" { ".video" } else { "" })
+    let suffix = match kind {
+        "silent" => ".video",
+        "audio" if multiple_media => ".audio",
+        _ => "",
+    };
+    (extension, suffix)
 }
 
 pub fn spawn(state: Arc<ServiceState>) {
@@ -284,11 +290,14 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
         return Ok(());
     }
 
-    update(
-        state,
-        &mut task,
-        json!({ "status": "muxing", "progress": 100, "speed": 0 }),
-    );
+    let media_kinds: Vec<&str> = options
+        .outputs
+        .iter()
+        .filter(|k| matches!(k.as_str(), "video" | "silent" | "audio" | "mp3"))
+        .map(|s| s.as_str())
+        .collect();
+    let multiple_media = media_kinds.len() > 1;
+
     let view = tasks::view_of(&task, &state.settings().directory);
     let (directory, basename) = match output_location(&view, &Streams::default()) {
         Ok(location) => location,
@@ -308,39 +317,220 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
         .unwrap_or(0) as u32;
 
     let mut artifacts = serde_json::Map::new();
+    let mut warnings: Vec<String> = Vec::new();
     let mut output: Option<String> = None;
-    for kind in options
-        .outputs
-        .iter()
-        .filter(|kind| matches!(kind.as_str(), "video" | "silent" | "audio"))
-    {
-        let (extension, suffix) = extension_for(kind, lossless, dolby, quality);
-        let target = directory.join(format!("{basename}{suffix}.{extension}"));
-        update(state, &mut task, json!({ "stage": kind }));
-        let result = bewly_media::remux(
-            if kind == "silent" || kind == "video" {
-                video.as_deref()
-            } else {
-                None
-            },
-            if kind == "silent" {
-                None
-            } else {
-                audio.as_deref()
-            },
-            &target,
-            extension,
-            matches!(extension, "mp4" | "m4a"),
+
+    if !media_kinds.is_empty() {
+        update(
+            state,
+            &mut task,
+            json!({ "status": "muxing", "progress": 100, "speed": 0 }),
         );
-        if let Err(error) = result {
-            fail(state, &mut task, &error.to_string());
-            return Ok(());
+        for kind in media_kinds {
+            let (extension, suffix) = extension_for(kind, lossless, dolby, quality, multiple_media);
+            let target = directory.join(format!("{basename}{suffix}.{extension}"));
+            update(state, &mut task, json!({ "stage": kind }));
+            match kind {
+                "mp3" => {
+                    let Some(audio) = audio.as_deref() else {
+                        fail(state, &mut task, "没有所选音频流");
+                        return Ok(());
+                    };
+                    if let Err(error) = bewly_media::transcode_mp3(audio, &target) {
+                        fail(state, &mut task, &error.to_string());
+                        return Ok(());
+                    }
+                }
+                "video" | "silent" | "audio" => {
+                    let result = bewly_media::remux(
+                        if kind == "audio" {
+                            None
+                        } else {
+                            video.as_deref()
+                        },
+                        if kind == "silent" {
+                            None
+                        } else {
+                            audio.as_deref()
+                        },
+                        &target,
+                        extension,
+                        matches!(extension, "mp4" | "m4a"),
+                    );
+                    if let Err(error) = result {
+                        fail(state, &mut task, &error.to_string());
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+            let text = target.to_string_lossy().into_owned();
+            artifacts.insert(kind.to_string(), Value::String(text.clone()));
+            if output.is_none() {
+                output = Some(text);
+            }
         }
-        let text = target.to_string_lossy().into_owned();
-        artifacts.insert(kind.clone(), Value::String(text.clone()));
-        if output.is_none() {
-            output = Some(text);
+    }
+
+    if cancel.load(Ordering::Relaxed) {
+        update(state, &mut task, json!({ "status": "paused", "speed": 0 }));
+        return Ok(());
+    }
+
+    update(
+        state,
+        &mut task,
+        json!({
+            "status": "postprocessing",
+            "stage": "",
+            "speed": 0,
+            "output": output.as_deref(),
+        }),
+    );
+
+    if options.outputs.iter().any(|k| k == "cover") {
+        let cover = task
+            .get("cover")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&view.cover)
+            .to_string();
+        if cover.is_empty() {
+            warnings.push("封面：任务没有封面地址".into());
+        } else {
+            match crate::net::fetch_bytes(&cover) {
+                Ok((bytes, content_type)) => {
+                    let extension = if content_type.contains("png") {
+                        "png"
+                    } else if content_type.contains("webp") {
+                        "webp"
+                    } else {
+                        "jpg"
+                    };
+                    let target = directory.join(format!("{basename}.{extension}"));
+                    match write_atomic(&target, &bytes) {
+                        Ok(()) => {
+                            let text = target.to_string_lossy().into_owned();
+                            artifacts.insert("cover".to_string(), Value::String(text.clone()));
+                            if output.is_none() {
+                                output = Some(text);
+                            }
+                        }
+                        Err(error) => warnings.push(format!("封面：{error}")),
+                    }
+                }
+                Err(error) => warnings.push(format!("封面：{error}")),
+            }
         }
+    }
+
+    let want_xml = options.outputs.iter().any(|k| k == "xml");
+    let want_ass = options.outputs.iter().any(|k| k == "ass");
+    if want_xml || want_ass {
+        let cid = task.get("cid").and_then(Value::as_u64).unwrap_or(0);
+        match crate::net::fetch_danmaku(cid) {
+            Ok(xml) => {
+                if want_xml {
+                    let target = directory.join(format!("{basename}.xml"));
+                    match write_atomic(&target, xml.as_bytes()) {
+                        Ok(()) => {
+                            let text = target.to_string_lossy().into_owned();
+                            artifacts.insert("xml".to_string(), Value::String(text.clone()));
+                            if output.is_none() {
+                                output = Some(text);
+                            }
+                        }
+                        Err(error) => warnings.push(format!("弹幕：{error}")),
+                    }
+                }
+                if want_ass {
+                    let ass_content = bewly_core::formats::to_ass(&xml);
+                    let target = directory.join(format!("{basename}.ass"));
+                    match write_atomic(&target, ass_content.as_bytes()) {
+                        Ok(()) => {
+                            let text = target.to_string_lossy().into_owned();
+                            artifacts.insert("ass".to_string(), Value::String(text.clone()));
+                            if output.is_none() {
+                                output = Some(text);
+                            }
+                        }
+                        Err(error) => warnings.push(format!("弹幕：{error}")),
+                    }
+                }
+            }
+            Err(error) => warnings.push(format!("弹幕：{error}")),
+        }
+    }
+
+    if options.outputs.iter().any(|k| k == "srt") {
+        let bvid = task.get("bvid").and_then(Value::as_str).unwrap_or("");
+        let cid = task.get("cid").and_then(Value::as_u64).unwrap_or(0);
+        let prepared_tracks = prepared
+            .get("subtitleTracks")
+            .and_then(Value::as_array)
+            .map(|a| a.as_slice());
+        let cookie = state
+            .cookie
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        match crate::net::fetch_subtitles(
+            bvid,
+            cid,
+            prepared_tracks,
+            &options.subtitle_languages,
+            &cookie,
+        ) {
+            Ok(subtitles) => {
+                if subtitles.is_empty() {
+                    warnings.push("字幕：这个视频没有所选语言的可用字幕".into());
+                } else {
+                    for subtitle in subtitles {
+                        let safe_lang = bewly_core::naming::safe_name(&subtitle.language);
+                        let target = directory.join(format!("{basename}.{safe_lang}.srt"));
+                        match write_atomic(&target, subtitle.content.as_bytes()) {
+                            Ok(()) => {
+                                let text = target.to_string_lossy().into_owned();
+                                artifacts.insert(
+                                    format!("srt-{}", subtitle.language),
+                                    Value::String(text.clone()),
+                                );
+                                if output.is_none() {
+                                    output = Some(text);
+                                }
+                            }
+                            Err(error) => warnings.push(format!("字幕：{error}")),
+                        }
+                    }
+                }
+            }
+            Err(error) => warnings.push(format!("字幕：{error}")),
+        }
+    }
+
+    if options.outputs.iter().any(|k| k == "nfo") {
+        let text = bewly_core::formats::to_nfo(&view);
+        let target = directory.join(format!("{basename}.nfo"));
+        match write_atomic(&target, text.as_bytes()) {
+            Ok(()) => {
+                let text = target.to_string_lossy().into_owned();
+                artifacts.insert("nfo".to_string(), Value::String(text.clone()));
+                if output.is_none() {
+                    output = Some(text);
+                }
+            }
+            Err(error) => warnings.push(format!("NFO：{error}")),
+        }
+    }
+
+    if output.is_none() && artifacts.is_empty() {
+        let message = if warnings.is_empty() {
+            "没有生成任何输出文件".to_string()
+        } else {
+            warnings.join("；")
+        };
+        fail(state, &mut task, &message);
+        return Ok(());
     }
 
     update(
@@ -350,14 +540,39 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
             "status": "completed",
             "progress": 100,
             "speed": 0,
+            "stage": "",
             "artifacts": artifacts,
             "output": output,
+            "warnings": warnings,
+            "prepared": Value::Null,
             "completedAt": tasks::service_now(),
         }),
     );
     state.save_snapshot();
     let _ = std::fs::remove_dir_all(&workdir);
     Ok(())
+}
+
+fn write_atomic(target: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = target.with_extension(format!(
+        "{}.part",
+        target
+            .extension()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "tmp".into())
+    ));
+    std::fs::write(&temporary, bytes)?;
+    if target.exists() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "同名文件已存在，保留了原文件",
+        ));
+    }
+    std::fs::rename(&temporary, target)
 }
 
 // Keep the map type in one place for the state definition.
@@ -369,13 +584,31 @@ mod tests {
 
     #[test]
     fn extensions_follow_the_node_rules() {
-        assert_eq!(extension_for("video", false, false, 80), ("mp4", ""));
-        assert_eq!(extension_for("video", true, false, 80), ("mkv", ""));
-        assert_eq!(extension_for("video", false, true, 80), ("mkv", ""));
-        assert_eq!(extension_for("video", false, false, 126), ("mkv", ""));
-        assert_eq!(extension_for("silent", false, false, 80), ("mp4", ".video"));
-        assert_eq!(extension_for("audio", false, false, 80), ("m4a", ""));
-        assert_eq!(extension_for("audio", true, false, 80), ("flac", ""));
-        assert_eq!(extension_for("audio", false, true, 80), ("mka", ""));
+        assert_eq!(extension_for("video", false, false, 80, false), ("mp4", ""));
+        assert_eq!(extension_for("video", true, false, 80, false), ("mkv", ""));
+        assert_eq!(extension_for("video", false, true, 80, false), ("mkv", ""));
+        assert_eq!(
+            extension_for("video", false, false, 126, false),
+            ("mkv", "")
+        );
+        assert_eq!(
+            extension_for("silent", false, false, 80, false),
+            ("mp4", ".video")
+        );
+        assert_eq!(extension_for("audio", false, false, 80, false), ("m4a", ""));
+        assert_eq!(
+            extension_for("audio", false, false, 80, true),
+            ("m4a", ".audio")
+        );
+        assert_eq!(extension_for("audio", true, false, 80, false), ("flac", ""));
+        assert_eq!(
+            extension_for("audio", true, false, 80, true),
+            ("flac", ".audio")
+        );
+        assert_eq!(extension_for("audio", false, true, 80, false), ("mka", ""));
+        assert_eq!(
+            extension_for("audio", false, true, 80, true),
+            ("mka", ".audio")
+        );
     }
 }

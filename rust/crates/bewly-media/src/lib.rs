@@ -113,6 +113,47 @@ pub fn remux(
     Ok(())
 }
 
+/// Encodes the audio stream to MP3 at the same VBR quality the Node build used.
+pub fn transcode_mp3(audio: &Path, output: &Path) -> Result<(), MediaError> {
+    let tool = ffmpeg().ok_or(MediaError::MissingTool)?;
+    if output.exists() {
+        return Err(MediaError::Exists);
+    }
+    let temporary = output.with_file_name(format!(".bewly-mp3-{}.part.mp3", std::process::id()));
+    let _ = std::fs::remove_file(&temporary);
+    let result = Command::new(tool)
+        .args(["-hide_banner", "-nostdin", "-y", "-i"])
+        .arg(audio)
+        .args([
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            "-f",
+            "mp3",
+        ])
+        .arg(&temporary)
+        .output()
+        .map_err(|error| MediaError::Failed(error.to_string()))?;
+    if !result.status.success() {
+        let _ = std::fs::remove_file(&temporary);
+        let detail = String::from_utf8_lossy(&result.stderr);
+        let tail: String = detail
+            .chars()
+            .rev()
+            .take(500)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        return Err(MediaError::Failed(tail.trim().to_string()));
+    }
+    std::fs::rename(&temporary, output).map_err(|error| MediaError::Io(error.to_string()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +163,8 @@ mod tests {
         std::env::set_var("BEWLY_FFMPEG", "/definitely/not/here");
         let result = remux(None, None, Path::new("out.mp4"), "mp4", true);
         assert!(matches!(result, Err(MediaError::MissingTool)));
+        let mp3_result = transcode_mp3(Path::new("in.m4a"), Path::new("out.mp3"));
+        assert!(matches!(mp3_result, Err(MediaError::MissingTool)));
         std::env::remove_var("BEWLY_FFMPEG");
     }
 }

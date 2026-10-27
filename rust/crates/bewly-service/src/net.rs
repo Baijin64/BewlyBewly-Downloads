@@ -287,6 +287,186 @@ pub fn resolve(
     }))
 }
 
+/// Fetches a small binary asset (covers) for the attachment step.
+pub fn fetch_bytes(url: &str) -> Result<(Vec<u8>, String), String> {
+    let lower = url.to_ascii_lowercase();
+    if !lower.starts_with("https://")
+        && !lower.starts_with("http://127.0.0.1")
+        && !lower.starts_with("http://localhost")
+    {
+        return Err("封面地址不受支持".into());
+    }
+    let response = agent()
+        .get(url)
+        .set("User-Agent", USER_AGENT)
+        .set("Referer", "https://www.bilibili.com/")
+        .call()
+        .map_err(|error| format!("封面下载失败：{error}"))?;
+    let content_type = response.header("content-type").unwrap_or("").to_string();
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("封面下载失败：{error}"))?;
+    if bytes.len() > 20 * 1024 * 1024 {
+        return Err("封面文件过大".into());
+    }
+    Ok((bytes, content_type))
+}
+
+/// Fetches XML danmaku for the attachment step.
+pub fn fetch_danmaku(cid: u64) -> Result<String, String> {
+    let url = if let Ok(custom) = std::env::var("BEWLY_DANMAKU_BASE") {
+        format!("{}/{cid}.xml", custom.trim_end_matches('/'))
+    } else if let Ok(custom) = std::env::var("BEWLY_API_BASE") {
+        format!("{}/{cid}.xml", custom.trim_end_matches('/'))
+    } else {
+        format!("https://comment.bilibili.com/{cid}.xml")
+    };
+    let response = match agent()
+        .get(&url)
+        .set("User-Agent", USER_AGENT)
+        .set("Referer", "https://www.bilibili.com/")
+        .call()
+    {
+        Ok(res) => res,
+        Err(ureq::Error::Status(code, _)) => {
+            return Err(format!("弹幕请求失败（HTTP {code}）"));
+        }
+        Err(error) => {
+            return Err(format!("弹幕请求失败：{error}"));
+        }
+    };
+    let text = response
+        .into_string()
+        .map_err(|error| format!("弹幕读取失败：{error}"))?;
+    if !text.contains("<i") {
+        return Err("接口没有返回 XML 弹幕".into());
+    }
+    Ok(text)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubtitleTrack {
+    pub language: String,
+    pub content: String,
+}
+
+/// Fetches and formats subtitles for the attachment step.
+pub fn fetch_subtitles(
+    bvid: &str,
+    cid: u64,
+    prepared_tracks: Option<&[Value]>,
+    languages: &[String],
+    cookie: &str,
+) -> Result<Vec<SubtitleTrack>, String> {
+    let mut tracks_to_fetch: Vec<(String, String)> = Vec::new();
+
+    if let Some(tracks) = prepared_tracks {
+        for track in tracks {
+            let url = track
+                .get("url")
+                .or_else(|| track.get("subtitle_url"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let lan = track
+                .get("language")
+                .or_else(|| track.get("lan"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !url.is_empty() && !lan.is_empty() {
+                tracks_to_fetch.push((lan.to_string(), url.to_string()));
+            }
+        }
+    }
+
+    if tracks_to_fetch.is_empty() {
+        let endpoint = format!(
+            "{}/x/player/v2?bvid={bvid}&cid={cid}",
+            base().trim_end_matches('/')
+        );
+        let mut request = agent()
+            .get(&endpoint)
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", "https://www.bilibili.com/");
+        if !cookie.is_empty() {
+            request = request.set("Cookie", cookie);
+        }
+        let response = match request.call() {
+            Ok(res) => res,
+            Err(ureq::Error::Status(code, _)) => {
+                return Err(format!("字幕请求失败（HTTP {code}）"));
+            }
+            Err(error) => {
+                return Err(format!("字幕请求失败：{error}"));
+            }
+        };
+        let body: Value = response
+            .into_json()
+            .map_err(|error| format!("字幕接口返回了无效内容：{error}"))?;
+        let subtitles = body
+            .pointer("/data/subtitle/subtitles")
+            .or_else(|| body.pointer("/subtitle/subtitles"))
+            .and_then(Value::as_array);
+        if let Some(subtitles) = subtitles {
+            for sub in subtitles {
+                let url = sub
+                    .get("subtitle_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let lan = sub.get("lan").and_then(Value::as_str).unwrap_or("");
+                if !url.is_empty() && !lan.is_empty() {
+                    tracks_to_fetch.push((lan.to_string(), url.to_string()));
+                }
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    for (lan, raw_url) in tracks_to_fetch {
+        if !languages.is_empty() && !languages.iter().any(|l| l == &lan) {
+            continue;
+        }
+        let target_url = if raw_url.starts_with("//") {
+            format!("https:{raw_url}")
+        } else if raw_url.starts_with('/') {
+            format!("{}{raw_url}", base().trim_end_matches('/'))
+        } else {
+            raw_url
+        };
+        let response = match agent()
+            .get(&target_url)
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", "https://www.bilibili.com/")
+            .call()
+        {
+            Ok(res) => res,
+            Err(ureq::Error::Status(code, _)) => {
+                return Err(format!("字幕请求失败（HTTP {code}）"));
+            }
+            Err(error) => {
+                return Err(format!("字幕下载失败：{error}"));
+            }
+        };
+        let sub_data: Value = response
+            .into_json()
+            .map_err(|error| format!("字幕内容不是合法 JSON：{error}"))?;
+        let fallback = Value::Array(Vec::new());
+        let cues = sub_data
+            .get("body")
+            .or_else(|| sub_data.pointer("/data/body"))
+            .unwrap_or(&fallback);
+        let content =
+            bewly_core::formats::to_srt(cues).map_err(|error| format!("字幕转换失败：{error}"))?;
+        result.push(SubtitleTrack {
+            language: lan,
+            content,
+        });
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +485,75 @@ mod tests {
             requested_page("https://www.bilibili.com/video/BV17x411w7KC/?p=x"),
             1
         );
+    }
+
+    #[test]
+    fn fetch_bytes_rejects_insecure_protocols() {
+        let result = fetch_bytes("ftp://example.com/cover.png");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fetch_danmaku_parses_xml_and_rejects_empty() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let body = "<i><d p=\"0,1,25,16777215,0\">弹幕内容</d></i>";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        std::env::set_var("BEWLY_DANMAKU_BASE", format!("http://127.0.0.1:{port}"));
+        let result = fetch_danmaku(12345).unwrap();
+        assert!(result.contains("弹幕内容"));
+        std::env::remove_var("BEWLY_DANMAKU_BASE");
+    }
+
+    #[test]
+    fn fetch_subtitles_converts_json_body_to_srt() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let body = json!({
+                    "body": [
+                        { "from": 0.0, "to": 1.5, "content": "第一句字幕" },
+                        { "from": 2.0, "to": 3.0, "content": "第二句字幕" }
+                    ]
+                })
+                .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        let tracks = json!([
+            { "url": format!("http://127.0.0.1:{port}/sub.json"), "language": "zh-CN" }
+        ]);
+        let subtitles = fetch_subtitles(
+            "BV17x411w7KC",
+            11,
+            tracks.as_array().map(|a| a.as_slice()),
+            &[],
+            "",
+        )
+        .unwrap();
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].language, "zh-CN");
+        assert!(subtitles[0].content.contains("第一句字幕"));
     }
 }

@@ -223,11 +223,36 @@ fn validate_prepared(value: &Value) -> Result<Value, String> {
             "bandwidth": input.get("bandwidth").and_then(Value::as_f64).unwrap_or(0.0),
         }))
     };
-    Ok(json!({
-        "video": stream(value.get("video"))?,
-        "audio": stream(value.get("audio"))?,
-        "preparedAt": 0,
-    }))
+    let subtitle_tracks = value
+        .get("subtitleTracks")
+        .and_then(Value::as_array)
+        .map(|tracks| {
+            tracks
+                .iter()
+                .take(10)
+                .filter_map(|track| {
+                    let url = track.get("url").and_then(Value::as_str)?;
+                    let lang = track.get("language").and_then(Value::as_str).unwrap_or("");
+                    let safe_lang = bewly_core::naming::safe_name(lang);
+                    let mut truncated: String = safe_lang.chars().take(30).collect();
+                    if truncated.is_empty() {
+                        truncated = "default".into();
+                    }
+                    Some(json!({
+                        "url": url,
+                        "language": truncated,
+                    }))
+                })
+                .collect::<Vec<_>>()
+        });
+    let mut map = serde_json::Map::new();
+    map.insert("video".into(), stream(value.get("video"))?);
+    map.insert("audio".into(), stream(value.get("audio"))?);
+    if let Some(tracks) = subtitle_tracks {
+        map.insert("subtitleTracks".into(), Value::Array(tracks));
+    }
+    map.insert("preparedAt".into(), json!(0));
+    Ok(Value::Object(map))
 }
 
 pub fn enqueue(
