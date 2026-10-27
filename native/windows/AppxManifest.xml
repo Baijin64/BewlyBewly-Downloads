@@ -6,10 +6,10 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
   IgnorableNamespaces="uap uap5 desktop4 rescap virtualization">
-  <Identity Name="Bewly.DownloadHelper" Publisher="CN=BewlyDownload.Local" Version="0.2.8.1" ProcessorArchitecture="x64" />
+  <Identity Name="Bewly.DownloadHelper" Publisher="CN=8BE064BB-20F6-4B24-8FB4-41C94B229A53" Version="0.2.8.1" ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>Bewly 下载助手</DisplayName>
-    <PublisherDisplayName>Bewly local development</PublisherDisplayName>
+    <PublisherDisplayName>Smart Scheduler Dev Cert</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <virtualization:FileSystemWriteVirtualization>
       <virtualization:ExcludedDirectories>

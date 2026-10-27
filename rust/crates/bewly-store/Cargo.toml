@@ -1,0 +1,14 @@
+[package]
+name = "bewly-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SQLite task store that stays byte-compatible with the Node implementation."
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+rusty-leveldb = "3"
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }

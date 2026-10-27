@@ -116,13 +116,17 @@ $packageLog = Join-Path $output 'helper-package.log'
 & (Join-Path $sdk.FullName 'x64\makeappx.exe') pack /d $stage /p $msix /o *> $packageLog
 if ($LASTEXITCODE -ne 0) { Get-Content -LiteralPath $packageLog -Tail 30; throw 'MSIX package validation failed.' }
 if ($DevSign) {
-    $certificate = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq 'CN=BewlyDownload.Local' -and $_.FriendlyName -eq 'BewlyDownload local development' -and $_.NotAfter -gt (Get-Date).AddDays(30) } | Select-Object -First 1
-    if (-not $certificate) {
-        $certificate = New-SelfSignedCertificate -Type Custom -Subject 'CN=BewlyDownload.Local' -FriendlyName 'BewlyDownload local development' -KeyUsage DigitalSignature -KeyAlgorithm RSA -KeyLength 2048 -CertStoreLocation Cert:\CurrentUser\My -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3','2.5.29.19={text}')
+    $targetPublisher = $packageManifest.Package.Identity.Publisher
+    $candidateCert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $targetPublisher -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) } | Select-Object -First 1
+    if (-not $candidateCert) {
+        $candidateCert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq $targetPublisher -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) } | Select-Object -First 1
     }
-    & (Join-Path $sdk.FullName 'x64\signtool.exe') sign /fd SHA256 /s My /sha1 $certificate.Thumbprint $msix
+    if (-not $candidateCert) {
+        throw "Signing certificate matching publisher '$targetPublisher' with private key was not found in Cert:\CurrentUser\My."
+    }
+    & (Join-Path $sdk.FullName 'x64\signtool.exe') sign /fd SHA256 /s My /sha1 $candidateCert.Thumbprint $msix
     if ($LASTEXITCODE -ne 0) { throw 'Development signing failed.' }
-    Export-Certificate -Cert $certificate -FilePath (Join-Path $output 'BewlyDownload-Development.cer') -Force | Out-Null
+    Export-Certificate -Cert $candidateCert -FilePath (Join-Path $output 'BewlyDownload-Development.cer') -Force | Out-Null
 }
 Write-Output "MSIX: $msix"
 Write-Output 'Package built. No certificate trust, package installation or browser registration was changed.'

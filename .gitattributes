@@ -14,3 +14,6 @@
 *.jpg binary
 *.woff2 binary
 *.ico binary
+
+# LevelDB fixtures must keep their exact bytes
+rust/crates/bewly-store/tests/fixtures/localstorage-leveldb/** -text
