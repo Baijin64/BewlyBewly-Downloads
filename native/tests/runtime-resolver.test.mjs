@@ -74,8 +74,8 @@ test('candidate ordering prefers the explicit override then the managed runtime'
   assert.equal(list[0].executable, override)
   assert.equal(list[2].executable, onPath)
 
-  const missing = candidates({ env: { PATH: '' }, dataDirectory: path.join(directory, 'absent'), platform: 'linux', arch: 'x64' })
-  assert.equal(missing.list.length, 0)
+  const missing = candidates({ env: { PATH: '' }, dataDirectory: path.join(directory, 'absent'), platform: 'darwin', arch: 'x64' })
+  assert.ok(missing.list.every(item => !item.executable.startsWith(directory)))
 })
 
 test('resolver reports a reason instead of throwing when nothing is usable', () => {

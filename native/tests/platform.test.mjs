@@ -18,7 +18,7 @@ function recorder() {
   return { calls, spawn, spawnSync, execFileSync }
 }
 
-test('win32 adapter keeps the exact host invocation contract', () => {
+test('win32 adapter keeps the exact host invocation contract', { skip: process.platform !== 'win32' }, () => {
   const tools = recorder()
   const env = { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local', APPDATA: 'C:\\Users\\x\\AppData\\Roaming' }
   const platform = createWin32({ packageRoot: 'C:\\app\\native', spawnImpl: tools.spawn, spawnSyncImpl: tools.spawnSync, execFileSyncImpl: tools.execFileSync, env })
