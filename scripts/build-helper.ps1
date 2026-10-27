@@ -41,6 +41,9 @@ if (Test-Path -LiteralPath $stagedRuntime) {
 }
 foreach ($binary in @('aria2c.exe','ffmpeg.exe')) { Copy-Item -LiteralPath (Join-Path $BinDirectory $binary) -Destination (Join-Path $stage "bin\$binary") }
 Get-ChildItem -LiteralPath (Join-Path $projectRoot 'native') -File -Filter '*.mjs' | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage $_.Name) }
+foreach ($folder in @('platform','runtime')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot "native\$folder") -Destination (Join-Path $stage $folder) -Recurse -Force
+}
 Copy-Item -LiteralPath (Join-Path $projectRoot 'native\identity.json') -Destination (Join-Path $stage 'identity.json')
 $nativeModules = Join-Path $projectRoot 'native\node_modules'
 if (-not (Test-Path -LiteralPath (Join-Path $nativeModules 'classic-level\package.json'))) { throw 'Run npm ci --prefix native before building the helper.' }
