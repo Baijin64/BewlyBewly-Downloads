@@ -8,6 +8,8 @@ use std::borrow::Cow;
 
 use unicode_normalization::UnicodeNormalization;
 
+use crate::formats::DownloadOptions;
+
 /// `%v%` is frozen at the value the Node implementation wrote into file names.
 /// It must NOT follow the product version, otherwise upgrading renames files.
 pub const NAMING_VERSION: &str = "0.2.8";
@@ -30,41 +32,16 @@ const TOKENS: [&str; 15] = [
     "dd",
 ];
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Group {
     pub index: u32,
     pub title: String,
     pub id: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct NamingOptions {
-    pub quality: u32,
-    pub audio_quality: String,
-    pub codec: String,
-    pub filename_template: String,
-    pub folder_template: String,
-    pub create_folder: bool,
-    pub create_folder_add_index: bool,
-    pub outputs: Vec<String>,
-}
-
-impl Default for NamingOptions {
-    fn default() -> Self {
-        Self {
-            quality: 0,
-            audio_quality: "auto".into(),
-            codec: "auto".into(),
-            filename_template: "%title% [%bv%-%cid%]".into(),
-            folder_template: String::new(),
-            create_folder: false,
-            create_folder_add_index: false,
-            outputs: vec!["video".into()],
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct TaskView {
     pub title: String,
     pub part: String,
@@ -76,11 +53,14 @@ pub struct TaskView {
     pub uid: f64,
     pub pubdate: f64,
     pub created_at: String,
+    pub description: String,
+    pub cover: String,
+    pub directory: String,
     pub group: Option<Group>,
-    pub options: NamingOptions,
+    pub options: DownloadOptions,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct VideoStream {
     pub quality: u32,
     pub codec: u32,
@@ -89,7 +69,7 @@ pub struct VideoStream {
     pub urls: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AudioStream {
     pub id: u32,
     pub bandwidth: f64,
@@ -97,7 +77,7 @@ pub struct AudioStream {
     pub urls: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Streams {
     pub video: Option<VideoStream>,
     pub audio: Option<AudioStream>,
@@ -472,12 +452,12 @@ pub fn plan_location(task: &TaskView, streams: &Streams) -> PlanLocation {
         .filter(|part| !part.is_empty())
         .map(|part| safe_name(&render_template(part, task, streams)))
         .collect();
-    if let Some(group) = &task.group {
-        if !group.title.is_empty() {
-            parts.push(safe_name(&group.title));
-        }
-    } else if task.page_count > 1 {
-        parts.push(safe_name(&task.title));
+    // `task.group?.title` is falsy for an empty title, so an untitled group falls
+    // back to the multi-part folder exactly like the Node implementation.
+    match task.group.as_ref().filter(|group| !group.title.is_empty()) {
+        Some(group) => parts.push(safe_name(&group.title)),
+        None if task.page_count > 1 => parts.push(safe_name(&task.title)),
+        None => {}
     }
     if task.options.create_folder && task.options.outputs.len() > 1 {
         let base = if task.part.is_empty() {
@@ -552,7 +532,7 @@ mod tests {
     #[test]
     fn single_video_drops_index_and_following_literal() {
         let task = TaskView {
-            options: NamingOptions {
+            options: DownloadOptions {
                 filename_template: "%index:00%-%title%-%bv%".into(),
                 ..Default::default()
             },
@@ -570,7 +550,7 @@ mod tests {
             page: 1,
             page_count: 3,
             bvid: "BV1xx411c7mD".into(),
-            options: NamingOptions {
+            options: DownloadOptions {
                 filename_template: "%index:00%-%part%-%bv%".into(),
                 ..Default::default()
             },
@@ -590,7 +570,7 @@ mod tests {
                 title: "合集".into(),
                 id: "g".into(),
             }),
-            options: NamingOptions {
+            options: DownloadOptions {
                 filename_template: "%index:00%-%title%".into(),
                 ..Default::default()
             },
@@ -615,7 +595,7 @@ mod tests {
                 title: "系列视频".into(),
                 id: "g".into(),
             }),
-            options: NamingOptions {
+            options: DownloadOptions {
                 folder_template: "%upnn%/%dd:YYYY%/".into(),
                 create_folder: true,
                 create_folder_add_index: true,
