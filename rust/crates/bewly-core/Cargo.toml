@@ -1,0 +1,14 @@
+[package]
+name = "bewly-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pure domain logic: naming, formats, stream selection. No IO, no async."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+unicode-normalization = { workspace = true }
+time = { workspace = true }

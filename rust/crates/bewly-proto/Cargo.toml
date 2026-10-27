@@ -1,0 +1,11 @@
+[package]
+name = "bewly-proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native messaging frames and RPC envelope shared by host and service."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

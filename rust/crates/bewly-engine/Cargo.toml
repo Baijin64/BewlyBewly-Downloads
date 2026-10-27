@@ -1,0 +1,10 @@
+[package]
+name = "bewly-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Download engine and legacy aria2 control-file compatibility."
+
+[dependencies]
+thiserror = { workspace = true }
