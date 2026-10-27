@@ -1,0 +1,15 @@
+[package]
+name = "bewly-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native messaging host, service entry point and CLI."
+
+[dependencies]
+bewly-proto = { path = "../bewly-proto" }
+bewly-service = { path = "../bewly-service" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
