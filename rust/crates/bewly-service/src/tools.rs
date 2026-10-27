@@ -1,6 +1,7 @@
-//! Local tool jobs: currently BV/AV conversion plus job bookkeeping.
+//! Local tool jobs: BV/AV conversion, history export and job bookkeeping.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use bewly_store::Store;
 use serde_json::{json, Value};
@@ -110,6 +111,88 @@ pub fn convert_job(store: &Store, input: &str) -> Result<Value, String> {
             Ok(job)
         }
     }
+}
+
+pub fn export_history(store: &Store, target_directory: &Path) -> Result<PathBuf, String> {
+    if !target_directory.is_absolute() {
+        return Err("请选择输出目录".into());
+    }
+    std::fs::create_dir_all(target_directory).map_err(|e| e.to_string())?;
+
+    let tasks = store.tasks().map_err(|e| e.to_string())?;
+    let downloaded: Vec<Value> = tasks
+        .into_iter()
+        .filter(|t| t.get("status").and_then(Value::as_str) == Some("completed"))
+        .map(|task| {
+            let path = if let Some(legacy_path) = task.get("legacyPath").and_then(Value::as_str) {
+                legacy_path.to_string()
+            } else if let Some(output) = task.get("output").and_then(Value::as_str) {
+                Path::new(output)
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            } else {
+                task.get("directory")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let type_str = if let Some(lt) = task.get("legacyType").and_then(Value::as_str) {
+                lt.to_string()
+            } else if let Some(outputs) =
+                task.pointer("/options/outputs").and_then(Value::as_array)
+            {
+                outputs
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            } else {
+                String::new()
+            };
+            json!({
+                "vid": task.get("id").unwrap_or(&Value::Null),
+                "uid": task.get("uid").unwrap_or(&json!(0)),
+                "upname": task.get("author").unwrap_or(&json!("")),
+                "title": task.get("title").unwrap_or(&json!("")),
+                "bv": task.get("bvid").unwrap_or(&json!("")),
+                "pic": task.get("cover").unwrap_or(&json!("")),
+                "path": path,
+                "downDate": task.get("completedAt").or_else(|| task.get("updatedAt")).unwrap_or(&json!("")),
+                "type": type_str,
+            })
+        })
+        .collect();
+
+    if downloaded.is_empty() {
+        return Err("没有可导出的已完成记录".into());
+    }
+
+    let payload = json!({ "downloaded": downloaded }).to_string();
+    let encoded = crate::migration::encode_bilidownexport(&payload);
+
+    let now_date = crate::tasks::service_now();
+    let date_prefix = if now_date.len() >= 10 {
+        &now_date[..10]
+    } else {
+        "export"
+    };
+    let uuid_str = Uuid::new_v4().to_string();
+    let target = target_directory.join(format!(
+        "bewly_history_{}-{}.bilidownexport",
+        date_prefix,
+        &uuid_str[..8]
+    ));
+
+    if target.exists() {
+        return Err("输出文件已存在，已保留原文件".into());
+    }
+
+    let temporary = target_directory.join(format!(".bewly-tool-{}.bilidownexport", Uuid::new_v4()));
+    std::fs::write(&temporary, encoded.as_bytes()).map_err(|e| e.to_string())?;
+    std::fs::rename(&temporary, &target).map_err(|e| e.to_string())?;
+
+    Ok(target)
 }
 
 pub fn job_map(job: &Value) -> BTreeMap<String, Value> {

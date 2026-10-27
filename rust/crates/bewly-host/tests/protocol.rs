@@ -397,6 +397,61 @@ fn migration_previews_and_imports_legacy_settings() {
         112
     );
 
+    let history_file = directory.join("history.bilidownexport");
+    let history_json = json!({
+        "downloaded": [{
+            "vid": "123",
+            "bv": "BV17x411w7KC",
+            "title": "视频😀",
+            "pic": "http://i0.hdslb.com/bfs/archive/fixture.jpg@240w",
+            "path": directory.to_string_lossy(),
+            "downDate": "2024-11-07"
+        }]
+    })
+    .to_string();
+    let encoded = bewly_service::migration::encode_bilidownexport(&history_json);
+    std::fs::write(&history_file, encoded.as_bytes()).unwrap();
+
+    let hist_preview = call(
+        port,
+        &token,
+        "migrationPreview",
+        json!({ "settings": false, "historyFile": history_file.to_string_lossy() }),
+    );
+    assert_eq!(hist_preview["ok"], true, "{hist_preview}");
+    assert_eq!(hist_preview["result"]["total"], 1);
+    assert_eq!(hist_preview["result"]["duplicate"], 0);
+    let hist_id = hist_preview["result"]["id"].as_str().unwrap();
+
+    let hist_import = call(
+        port,
+        &token,
+        "migrationImport",
+        json!({ "id": hist_id, "history": true }),
+    );
+    assert_eq!(hist_import["ok"], true, "{hist_import}");
+    assert_eq!(hist_import["result"]["imported"], 1);
+
+    let export_dir = directory.join("exported");
+    let export_res = call(
+        port,
+        &token,
+        "tool",
+        json!({ "op": "exportHistory", "directory": export_dir.to_string_lossy() }),
+    );
+    assert_eq!(export_res["ok"], true, "{export_res}");
+    let exported_path = export_res["result"]["path"].as_str().unwrap();
+    assert!(std::path::Path::new(exported_path).exists());
+
+    let roundtrip_preview = call(
+        port,
+        &token,
+        "migrationPreview",
+        json!({ "settings": false, "historyFile": exported_path }),
+    );
+    assert_eq!(roundtrip_preview["ok"], true, "{roundtrip_preview}");
+    assert_eq!(roundtrip_preview["result"]["duplicate"], 1);
+
     let _ = child.kill();
     let _ = child.wait();
 }

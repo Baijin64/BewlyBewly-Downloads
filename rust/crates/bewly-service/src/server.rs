@@ -324,7 +324,8 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
             crate::net::inspect(video, &cookie)
         }
         "migrationPreview" => {
-            let preview = crate::migration::preview(&state.data_directory, params)?;
+            let store = state.store();
+            let preview = crate::migration::preview(&store, &state.data_directory, params)?;
             let settings = preview.get("settings").cloned().unwrap_or(Value::Null);
             let current = serde_json::to_value(state.settings()).unwrap_or_else(|_| json!({}));
             let changes: Vec<Value> = settings
@@ -346,23 +347,22 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
             let stored = json!({
                 "id": id,
                 "settings": settings,
-                "records": [],
+                "records": preview["records"],
                 "createdAt": now_ms(),
             });
-            state
-                .store()
+            store
                 .put_preview(&id, &stored)
                 .map_err(|error| error.to_string())?;
             Ok(json!({
                 "id": id,
                 "profile": preview["profile"],
                 "changes": changes,
-                "total": 0,
-                "duplicate": 0,
-                "invalid": 0,
-                "missingDirectories": 0,
+                "total": preview["total"],
+                "duplicate": preview["duplicate"],
+                "invalid": preview["invalid"],
+                "missingDirectories": preview["missingDirectories"],
                 "warnings": preview["warnings"],
-                "sample": [],
+                "sample": preview["sample"],
             }))
         }
         "migrationImport" => {
@@ -408,15 +408,59 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
                 state.persist_settings(&next)?;
                 *state.settings.write().expect("settings lock") = next;
             }
+            let mut imported = 0;
+            let mut duplicate = 0;
+            let mut restored_covers = 0;
+
+            if params.get("history").and_then(Value::as_bool) == Some(true) {
+                if let Some(records) = stored.get("records").and_then(Value::as_array) {
+                    let store = state.store();
+                    let all_tasks = store.tasks().map_err(|e| e.to_string())?;
+                    for record in records {
+                        let record_id = record.get("id").and_then(Value::as_str).unwrap_or("");
+                        let legacy_id = record
+                            .get("legacySourceId")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let existing = all_tasks.iter().find(|t| {
+                            let t_id = t.get("id").and_then(Value::as_str).unwrap_or("");
+                            let t_legacy = t
+                                .get("legacySourceId")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            t_id == record_id
+                                || (!legacy_id.is_empty()
+                                    && (t_id == legacy_id || t_legacy == legacy_id))
+                        });
+                        if let Some(existing) = existing {
+                            duplicate += 1;
+                            let existing_cover =
+                                existing.get("cover").and_then(Value::as_str).unwrap_or("");
+                            let new_cover =
+                                record.get("cover").and_then(Value::as_str).unwrap_or("");
+                            if existing_cover.is_empty() && !new_cover.is_empty() {
+                                let mut updated = existing.clone();
+                                updated["cover"] = Value::String(new_cover.to_string());
+                                let _ = store.put_task(&updated);
+                                restored_covers += 1;
+                            }
+                        } else {
+                            let _ = store.put_task(record);
+                            imported += 1;
+                        }
+                    }
+                }
+            }
+
             state
                 .store()
                 .remove_preview(id)
                 .map_err(|error| error.to_string())?;
             state.save_snapshot();
             Ok(json!({
-                "imported": 0,
-                "duplicate": 0,
-                "restoredCovers": 0,
+                "imported": imported,
+                "duplicate": duplicate,
+                "restoredCovers": restored_covers,
                 "settings": keys.len(),
             }))
         }
@@ -620,6 +664,16 @@ fn tool_request(state: &ServiceState, params: &Value) -> Result<Value, String> {
                 .ok_or("工具任务不存在")?;
             let store = state.store();
             tools::load_job(&store, id)?.ok_or_else(|| "工具任务不存在".to_string())
+        }
+        "exportHistory" => {
+            let directory = params
+                .get("directory")
+                .and_then(Value::as_str)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(state.settings().directory));
+            let store = state.store();
+            let path = tools::export_history(&store, &directory)?;
+            Ok(json!({ "path": path.to_string_lossy() }))
         }
         "pick" => {
             let kind = params
