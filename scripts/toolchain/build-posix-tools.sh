@@ -39,11 +39,14 @@ if [ "$PLATFORM" = linux ]; then
   TLS_FLAGS="--with-openssl"
 else
   if command -v brew >/dev/null 2>&1; then
-    brew install openssl@3 c-ares lame >/dev/null 2>&1 || true
+    brew install openssl@3 c-ares lame || true
     OPENSSL_PREFIX=$(brew --prefix openssl@3)
-    export PKG_CONFIG_PATH="$OPENSSL_PREFIX/lib/pkgconfig:$(brew --prefix c-ares)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    export CPPFLAGS="-I$OPENSSL_PREFIX/include ${CPPFLAGS:-}"
-    export LDFLAGS="-L$OPENSSL_PREFIX/lib ${LDFLAGS:-}"
+    LAME_PREFIX=$(brew --prefix lame)
+    CARES_PREFIX=$(brew --prefix c-ares)
+    export PKG_CONFIG_PATH="$LAME_PREFIX/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig:$CARES_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LAME_PREFIX/include ${CPPFLAGS:-}"
+    export LDFLAGS="-L$OPENSSL_PREFIX/lib -L$LAME_PREFIX/lib ${LDFLAGS:-}"
+    pkg-config --exists lame || { echo "libmp3lame not found via pkg-config" >&2; exit 1; }
   fi
   TLS_FLAGS="--with-appletls"
 fi
