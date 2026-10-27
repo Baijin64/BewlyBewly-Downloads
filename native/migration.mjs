@@ -112,8 +112,9 @@ export class LegacyMigration {
     const warnings = ['不迁移登录信息。自动关机与剪贴板监听保持关闭，可在新设置中主动启用。', '旧版窗口的关闭方式不迁移；新助手继续使用已选择的后台与托盘设置。']
     let records = [], invalid = 0
     const legacyProfile = platform.legacyProfile()
-    if (!params.profile && !legacyProfile) throw new Error('当前平台没有旧版 Bilidown 数据，可通过导出文件导入历史')
-    const profile = path.resolve(params.profile || legacyProfile)
+    // History-only imports do not need a legacy profile directory.
+    if (params.settings !== false && !params.profile && !legacyProfile) throw new Error('当前平台没有旧版 Bilidown 数据，可通过导出文件导入历史')
+    const profile = params.profile ? path.resolve(params.profile) : legacyProfile
     if (params.settings !== false) settings = await readLegacySettings(profile, this.dataDirectory)
     if (params.historyFile) {
       if (typeof params.historyFile !== 'string' || !path.isAbsolute(params.historyFile) || path.extname(params.historyFile).toLowerCase() !== '.bilidownexport') throw new Error('请选择原版导出的 .bilidownexport 文件')

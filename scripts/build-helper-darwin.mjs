@@ -108,23 +108,9 @@ export async function buildDarwin({ repoRoot, target, bin, stageOnly, out, clean
   copyFileSync(path.join(stage, 'BewlyTray'), path.join(contents, 'MacOS', 'BewlyTray'))
   chmodSync(path.join(contents, 'MacOS', 'BewlyTray'), 0o755)
 
-  const launcher = path.join(contents, 'MacOS', 'BewlyDownload')
-  writeFileSync(launcher, [
-    '#!/bin/sh',
-    'set -u',
-    'DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../Resources/native" && pwd)',
-    'DATA="${BEWLY_DOWNLOAD_DATA:-$HOME/Library/Application Support/BewlyDownload}"',
-    'if [ $# -eq 0 ]; then',
-    '  # First run must prepare a runtime before launcher.sh can resolve one.',
-    '  if [ ! -x "$DATA/runtime/node/bin/node" ] && ! command -v node >/dev/null 2>&1; then',
-    '    sh "$DIR/posix/fetch-node.sh" || exit 1',
-    '  fi',
-    '  exec "$DIR/posix/launcher.sh" first-run',
-    'fi',
-    'exec "$DIR/posix/launcher.sh" "$@"',
-    '',
-  ].join('\n'))
-  chmodSync(launcher, 0o755)
+  console.log('编译启动器…')
+  run('xcrun', ['clang', '-O2', '-arch', arch, path.join(repoRoot, 'native', 'macos', 'launcher.c'), '-o', path.join(contents, 'MacOS', 'BewlyDownload')])
+  chmodSync(path.join(contents, 'MacOS', 'BewlyDownload'), 0o755)
 
   const plist = readFileSync(path.join(repoRoot, 'native', 'macos', 'Info.plist'), 'utf8').replaceAll('0.2.8', version)
   writeFileSync(path.join(contents, 'Info.plist'), plist)

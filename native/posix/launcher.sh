@@ -37,7 +37,14 @@ resolve_node() {
   return 1
 }
 
-NODE=$(resolve_node) || exec "$DIR/degraded.sh" "$@"
+NODE=$(resolve_node) || {
+  if [ "${1:-}" = "first-run" ]; then
+    sh "$DIR/fetch-node.sh" >/dev/null || exit 1
+    NODE=$(resolve_node) || exec "$DIR/degraded.sh" "$@"
+  else
+    exec "$DIR/degraded.sh" "$@"
+  fi
+}
 
 case "${1:-}" in
   ''|-*) exec "$NODE" "$DIR/cli.mjs" "$@" ;;

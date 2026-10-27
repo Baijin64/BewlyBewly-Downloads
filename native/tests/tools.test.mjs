@@ -138,7 +138,7 @@ test('local tools convert subtitles and preserve existing outputs', async (t) =>
 test('real auxiliary MP3 conversion and manual mux preserve source files', { skip: !existsSync(toolPath('ffmpeg')), timeout: 10000 }, async (t) => {
   const directory = await temporary(t), store = new TaskStore(path.join(directory, 'data'))
   const queue = new DownloadQueue({ store, bin, dataDirectory: directory }), jobs = new ToolJobs({ store, queue, root: helper })
-  const ffmpeg = path.join(bin, 'ffmpeg.exe'), audio = path.join(directory, 'source.m4a'), video = path.join(directory, 'source.mp4')
+  const ffmpeg = toolPath('ffmpeg'), audio = path.join(directory, 'source.m4a'), video = path.join(directory, 'source.mp4')
   execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '0.2', '-c:a', 'aac', audio], { windowsHide: true })
   execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.2', '-c:v', 'libx264', '-an', video], { windowsHide: true })
   const mp3 = await jobs.execute({ op: 'audioToMp3', source: audio, directory: path.join(directory, 'output') }, new AbortController().signal)

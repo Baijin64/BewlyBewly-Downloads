@@ -92,7 +92,7 @@ test('passive native requests never start a download service', { skip: !existsSy
   assert.equal(existsSync(path.join(directory, 'downloads.sqlite')), false)
 })
 
-test('a pending-only service exits despite polling and its live native bridge exits too', { skip: !existsSync(exe), timeout: 25000 }, async t => {
+test('a pending-only service exits despite polling and its live native bridge exits too', { skip: process.platform !== 'win32' || !existsSync(exe), timeout: 25000 }, async t => {
   const directory = await temporary(t)
   const host = spawn(exe, [origin], { env: environment(directory), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
   t.after(() => { host.kill(); host.stdin.destroy() })
@@ -145,7 +145,7 @@ test('manual Windows launch promotes an existing on-demand service without repla
   await until(() => !alive(before))
 })
 
-test('a slow active download is retained until completion, then the service exits', { skip: !existsSync(exe), timeout: 24000 }, async t => {
+test('a slow active download is retained until completion, then the service exits', { skip: process.platform !== 'win32' || !existsSync(exe), timeout: 24000 }, async t => {
   const directory = await temporary(t), script = path.join(directory, 'slow-service.mjs')
   const serviceUrl = new URL('../service.mjs', 'file:///' + helper.replaceAll('\\', '/') + '/tests/test.mjs').href
   writeFileSync(script, `import {setTimeout as delay} from 'node:timers/promises'; globalThis.fetch = async () => { await delay(6500); return new Response('synthetic cover'); }; const {startService} = await import(${JSON.stringify(serviceUrl)}); await startService();`)
