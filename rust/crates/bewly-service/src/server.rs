@@ -34,6 +34,7 @@ pub struct ServiceState {
     pub caps: PlatformCaps,
     pub lifetime: SharedLifetime,
     pub active_requests: AtomicUsize,
+    pub tray: std::sync::Mutex<Option<std::process::Child>>,
 }
 
 impl ServiceState {
@@ -56,6 +57,7 @@ impl ServiceState {
             caps: PlatformCaps::current(),
             lifetime: SharedLifetime::new(mode),
             active_requests: AtomicUsize::new(0),
+            tray: std::sync::Mutex::new(None),
         })
     }
 
@@ -292,6 +294,20 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
                 "listenClipboard": settings.listen_clipboard,
                 "shutdownDue": 0,
             }))
+        }
+        "expandLink" => {
+            let video = params
+                .get("video")
+                .and_then(Value::as_str)
+                .ok_or("缺少视频链接")?;
+            crate::net::expand(video).map(Value::String)
+        }
+        "inspect" => {
+            let video = params
+                .get("video")
+                .and_then(Value::as_str)
+                .ok_or("缺少视频链接")?;
+            crate::net::inspect(video, "")
         }
         "migrationPreview" => {
             let preview = crate::migration::preview(&state.data_directory, params)?;
@@ -591,6 +607,22 @@ fn tool_request(state: &ServiceState, params: &Value) -> Result<Value, String> {
             let store = state.store();
             tools::load_job(&store, id)?.ok_or_else(|| "工具任务不存在".to_string())
         }
+        "pick" => {
+            let kind = params
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("directory");
+            let dialog = rfd::FileDialog::new();
+            let chosen = if kind == "directory" {
+                dialog.pick_folder()
+            } else {
+                dialog.pick_file()
+            };
+            Ok(match chosen {
+                Some(path) => json!({ "path": path.to_string_lossy(), "cancelled": false }),
+                None => json!({ "path": Value::Null, "cancelled": true }),
+            })
+        }
         "cancel" => Ok(json!({ "cancelled": true })),
         _ => Err("此工具操作尚未迁移到 Rust 引擎".into()),
     }
@@ -600,6 +632,7 @@ fn desktop_action(state: &ServiceState, params: &Value) -> Result<Value, String>
     match params.get("action").and_then(Value::as_str).unwrap_or("") {
         "keepRunning" => {
             state.lifetime.lock().manual();
+            ensure_tray(state);
             Ok(json!({ "mode": "manual" }))
         }
         "cancelShutdown" => Ok(json!({ "cancelled": true })),
@@ -617,6 +650,47 @@ fn desktop_action(state: &ServiceState, params: &Value) -> Result<Value, String>
         }
         _ => Err("无效托盘操作".into()),
     }
+}
+
+/// Starts the platform tray process once. The tray is an RPC client, so keeping
+/// the existing C#/Swift implementation needs no protocol work on this side.
+pub fn ensure_tray(state: &ServiceState) {
+    if !state.caps.tray {
+        return;
+    }
+    let mut guard = state
+        .tray
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(child) = guard.as_mut() {
+        if child.try_wait().ok().flatten().is_none() {
+            return;
+        }
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let Some(directory) = executable.parent() else {
+        return;
+    };
+    let name = if cfg!(target_os = "windows") {
+        "BewlyDownloadTray.exe"
+    } else {
+        "BewlyTray"
+    };
+    let tray = directory.join(name);
+    if !tray.exists() {
+        return;
+    }
+    let spawned = std::process::Command::new(tray)
+        .arg("--tray")
+        .arg(&state.data_directory)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok();
+    *guard = spawned;
 }
 
 fn forbidden() -> Response {
@@ -693,6 +767,7 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
     let state = Arc::new(ServiceState::open(&data_directory, &mode)?);
     let token = state.token.clone();
     state.save_snapshot();
+    ensure_tray(&state);
     let housekeeping = state.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));

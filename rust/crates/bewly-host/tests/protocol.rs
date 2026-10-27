@@ -400,3 +400,98 @@ fn migration_previews_and_imports_legacy_settings() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+fn mock_bilibili() -> (u16, std::thread::JoinHandle<()>) {
+    use std::net::TcpListener;
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buffer = [0u8; 2048];
+            let _ = stream.read(&mut buffer);
+            let body = json!({
+                "code": 0,
+                "data": {
+                    "bvid": "BV17x411w7KC",
+                    "title": "测试视频",
+                    "owner": { "name": "UP主", "mid": 42 },
+                    "pubdate": 1700000000,
+                    "desc": "简介",
+                    "pic": "https://i0.hdslb.com/a.jpg",
+                    "pages": [
+                        { "cid": 11, "page": 1, "part": "P1", "duration": 10 },
+                        { "cid": 12, "page": 2, "part": "P2", "duration": 11 }
+                    ]
+                }
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    (port, handle)
+}
+
+#[test]
+fn inspect_reads_the_view_api_and_expand_passes_regular_urls() {
+    let directory = temp_directory("inspect");
+    let (api_port, mock) = mock_bilibili();
+    let mut child = Command::new(host_binary())
+        .arg("--service")
+        .env("BEWLY_DOWNLOAD_DATA", &directory)
+        .env("BEWLY_DOWNLOAD_MODE", "manual")
+        .env("BEWLY_API_BASE", format!("http://127.0.0.1:{api_port}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let descriptor_path = directory.join("connection.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let descriptor: Value = loop {
+        if let Ok(text) = std::fs::read_to_string(&descriptor_path) {
+            if let Ok(value) = serde_json::from_str(&text) {
+                break value;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "service did not publish a descriptor"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let port = descriptor["port"].as_u64().unwrap() as u16;
+    let token = descriptor["token"].as_str().unwrap();
+
+    let inspected = call(
+        port,
+        token,
+        "inspect",
+        json!({ "video": "https://www.bilibili.com/video/BV17x411w7KC/?p=2" }),
+    );
+    assert_eq!(inspected["ok"], true, "{inspected}");
+    assert_eq!(inspected["result"]["title"], "测试视频");
+    assert_eq!(inspected["result"]["author"], "UP主");
+    assert_eq!(inspected["result"]["requestedPage"], 2);
+    assert_eq!(inspected["result"]["pages"].as_array().unwrap().len(), 2);
+    assert_eq!(inspected["result"]["pages"][1]["cid"], 12);
+
+    let expanded = call(
+        port,
+        token,
+        "expandLink",
+        json!({ "video": "https://www.bilibili.com/video/BV17x411w7KC" }),
+    );
+    assert_eq!(expanded["ok"], true, "{expanded}");
+    assert_eq!(
+        expanded["result"],
+        "https://www.bilibili.com/video/BV17x411w7KC"
+    );
+
+    let _ = mock.join();
+    let _ = child.kill();
+    let _ = child.wait();
+}

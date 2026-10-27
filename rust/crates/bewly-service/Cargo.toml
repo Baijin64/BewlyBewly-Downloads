@@ -12,6 +12,9 @@ bewly-core = { path = "../bewly-core" }
 bewly-proto = { path = "../bewly-proto" }
 bewly-store = { path = "../bewly-store" }
 rusty-leveldb = "3"
+ureq = { version = "2", features = ["json"] }
+url = "2"
+rfd = "0.15"
 serde = { workspace = true }
 serde_json = { workspace = true }
 subtle = "2"

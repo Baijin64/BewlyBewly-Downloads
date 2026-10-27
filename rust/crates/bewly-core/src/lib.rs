@@ -4,4 +4,5 @@
 //! it is the layer reused by the desktop service, the mobile FFI and the tests.
 
 pub mod formats;
+pub mod ids;
 pub mod naming;
