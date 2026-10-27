@@ -4,3 +4,6 @@
 //! it decides whether an interrupted task can resume or must restart from zero.
 
 pub mod aria2_control;
+pub mod plan;
+pub mod sidecar;
+pub mod transfer;

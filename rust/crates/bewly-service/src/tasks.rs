@@ -188,6 +188,48 @@ fn duplicate_of<'a>(
     })
 }
 
+/// Minimal `validatePrepared` port: keep the resolved stream URLs so the engine
+/// can download without another playurl round trip.
+fn validate_prepared(value: &Value) -> Result<Value, String> {
+    if !value.is_object() {
+        return Err("缺少视频解析结果".into());
+    }
+    let stream = |input: Option<&Value>| -> Result<Value, String> {
+        let Some(input) = input else {
+            return Ok(Value::Null);
+        };
+        let urls = input
+            .get("urls")
+            .and_then(Value::as_array)
+            .ok_or("无效媒体列表")?;
+        if urls.is_empty() || urls.len() > 10 {
+            return Err("无效媒体列表".into());
+        }
+        let mut clean = Vec::with_capacity(urls.len());
+        for url in urls {
+            let text = url.as_str().ok_or("无效媒体列表")?;
+            let lower = text.to_ascii_lowercase();
+            if !lower.starts_with("https://") {
+                return Err("视频接口返回了不受支持的媒体地址".into());
+            }
+            clean.push(Value::String(text.to_string()));
+        }
+        Ok(json!({
+            "urls": clean,
+            "quality": input.get("quality").and_then(Value::as_f64).unwrap_or(0.0),
+            "id": input.get("id").and_then(Value::as_f64).unwrap_or(0.0),
+            "codec": input.get("codec").and_then(Value::as_f64).unwrap_or(0.0),
+            "codecs": input.get("codecs").and_then(Value::as_str).unwrap_or(""),
+            "bandwidth": input.get("bandwidth").and_then(Value::as_f64).unwrap_or(0.0),
+        }))
+    };
+    Ok(json!({
+        "video": stream(value.get("video"))?,
+        "audio": stream(value.get("audio"))?,
+        "preparedAt": 0,
+    }))
+}
+
 pub fn enqueue(
     store: &Store,
     settings: &Settings,
@@ -287,6 +329,13 @@ pub fn enqueue(
             serde_json::to_value(&options).map_err(|error| error.to_string())?,
         );
         task.insert("directory".into(), Value::String(directory));
+        if let Some(prepared) = params
+            .get("prepared")
+            .and_then(Value::as_object)
+            .and_then(|object| object.get(&cid.to_string()))
+        {
+            task.insert("prepared".into(), validate_prepared(prepared)?);
+        }
         task.insert(
             "status".into(),
             Value::String(if start { "queued" } else { "pending" }.into()),

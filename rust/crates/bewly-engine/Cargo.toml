@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Download engine and legacy aria2 control-file compatibility."
+description = "Download engine: piece planning, resume sidecar and the legacy aria2 reader."
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
+ureq = "2"
