@@ -34,12 +34,12 @@ fetch() {
 if [ "$PLATFORM" = linux ]; then
   if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update -qq
-    sudo apt-get install -y -qq build-essential pkg-config libssl-dev zlib1g-dev libc-ares-dev libmp3lame-dev
+    sudo apt-get install -y -qq build-essential pkg-config nasm libssl-dev zlib1g-dev libc-ares-dev libmp3lame-dev
   fi
   TLS_FLAGS="--with-openssl"
 else
   if command -v brew >/dev/null 2>&1; then
-    brew install openssl@3 c-ares lame || true
+    brew install openssl@3 c-ares lame nasm || true
     OPENSSL_PREFIX=$(brew --prefix openssl@3)
     LAME_PREFIX=$(brew --prefix lame)
     CARES_PREFIX=$(brew --prefix c-ares)

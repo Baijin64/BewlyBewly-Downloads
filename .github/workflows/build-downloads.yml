@@ -26,7 +26,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $manifest = Get-Content native/toolchain.json -Raw | ConvertFrom-Json
-          gh release download $manifest.releaseTag --repo $env:GITHUB_REPOSITORY --pattern $manifest.asset --dir dist/toolchain-download
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            gh release download $manifest.releaseTag --repo $env:GITHUB_REPOSITORY --pattern $manifest.asset --dir dist/toolchain-download
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "toolchain download attempt $attempt failed; retrying"
+            Start-Sleep -Seconds 5
+          }
           if ($LASTEXITCODE -ne 0) { throw 'Media toolchain download failed' }
           Expand-Archive -LiteralPath (Join-Path dist/toolchain-download $manifest.asset) -DestinationPath dist/toolchain
           node scripts/verify-toolchain.mjs --platform win32-x64 dist/toolchain/bin
