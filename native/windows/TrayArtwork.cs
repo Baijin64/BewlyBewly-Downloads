@@ -19,13 +19,13 @@ public static class TrayArtwork
         path.CloseFigure();
         return path;
     }
-    public static void Glyph(Graphics g, string name, RectangleF rect, Color color)
+    public static void Glyph(Graphics g, string name, RectangleF rect, Color color, float penWidth = 1.8f)
     {
         var state = g.Save();
         g.TranslateTransform(rect.X, rect.Y);
         g.ScaleTransform(rect.Width / 24f, rect.Height / 24f);
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        using (var pen = new Pen(color, 1.8f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+        using (var pen = new Pen(color, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
         using (var brush = new SolidBrush(color))
         {
             if (name == "download") {
@@ -52,7 +52,15 @@ public static class TrayArtwork
             float inset = Math.Max(0.5f, size / 32f);
             using (var shape = Rounded(new RectangleF(inset, inset, size - inset * 2, size - inset * 2), size * 0.24f))
             using (var fill = new SolidBrush(Accent)) g.FillPath(fill, shape);
-            Glyph(g, "download", new RectangleF(size * 0.17f, size * 0.14f, size * 0.66f, size * 0.66f), Color.White);
+            // Full-bleed layout: the 24-unit glyph grid is scaled past the tile edges so the
+            // arrow and tray span ~84% of the tile width with only ~6-8% optical margins,
+            // matching how the extension logo fills its icon canvas. Every asset size is
+            // rendered natively (never downscaled from a master bitmap); below 96 px the
+            // stroke is thickened so antialiasing does not wash the mark out.
+            // Grid geometry: content incl. stroke spans x 2.5-21.5, y 1.5-21.5 of 24 units.
+            float grid = size * 1.053f;
+            float penWidth = size >= 96 ? 2.6f : 3.0f;
+            Glyph(g, "download", new RectangleF(-size * 0.027f, 0f, grid, grid), Color.White, penWidth);
         }
         return image;
     }

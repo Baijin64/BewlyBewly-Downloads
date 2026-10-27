@@ -170,7 +170,7 @@ async function load() {
     helper.value = await downloadRequest<HelperStatus>('health')
     if ((helper.value.protocol || 1) < 2) {
       throw new Error(
-        '这些功能需要 0.2.0 或更新的下载助手，请更新 MSIX 后重试。',
+        '这些功能需要 0.2.0 或更新的下载助手，请更新后重试。',
       )
     }
     if (!helper.value.deferred && !helper.value.engineInstalled)

@@ -12,7 +12,7 @@ import { finishHelperWake } from '../wake'
   >
     <p>只有执行下载、加入队列或本地文件操作时，才会启动已安装的助手。没有进行中的任务后会自动退出，队列和文件会保留。</p>
     <p class="hint">
-      以后点击这些操作时可自动唤起；可在下载设置中关闭。从 Windows 开始菜单手动打开助手，可保持后台运行。
+      以后点击这些操作时可自动唤起；可在下载设置中关闭。手动打开下载助手，可保持后台运行。
     </p>
     <div class="actions">
       <Button @click="finishHelperWake(false)">

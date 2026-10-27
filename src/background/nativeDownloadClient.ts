@@ -1,5 +1,6 @@
 import browser from 'webextension-polyfill'
 
+import { helperInstallHint } from '../download/platform'
 import type { DownloadReply } from '../download/types'
 import { markHelperOffline, rememberReply } from './downloadCache'
 
@@ -56,7 +57,7 @@ function ensurePort() {
     if (active) {
       clearTimeout(active.timeout)
       active.reject(new Error(/not found|not registered|specified native/i.test(detail)
-        ? '未找到下载助手，请安装新版助手并从开始菜单打开一次完成连接。'
+        ? helperInstallHint()
         : `下载助手连接中断：${detail}`))
       active = undefined
     }

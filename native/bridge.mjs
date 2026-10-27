@@ -1,13 +1,13 @@
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { VERSION } from './core.mjs'
+import { platform } from './platform/index.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
-const dataDirectory = process.env.BEWLY_DOWNLOAD_DATA || path.join(process.env.LOCALAPPDATA || root, 'BewlyDownload')
+const dataDirectory = platform.dataDirectory()
 const methods = new Set(['health', 'configure', 'inspect', 'expandLink', 'createTasks', 'stageTasks', 'listTasks', 'queryTasks', 'taskAction', 'batchAction', 'previewPath', 'taskFile', 'tool', 'migrationPreview', 'migrationImport'])
 let connecting
 let retryAfter = 0
@@ -75,15 +75,13 @@ async function startOrConnect(allowStart) {
     let serviceRunning = false
     try { serviceRunning = isRunning(Number(readFileSync(path.join(dataDirectory, 'service.lock'), 'utf8'))) } catch {}
     if (!startedPid && !serviceRunning) {
-      const launch = spawnSync(path.join(root, 'BewlyDownloadHost.exe'), ['--start-service', '--on-demand'], { windowsHide: true, encoding: 'utf8', env: process.env, timeout: 10000 })
-      if (launch.status !== 0 || launch.error) throw new Error('无法启动独立下载服务，请重新安装助手')
-      try { startedPid = JSON.parse(launch.stdout).pid } catch { throw new Error('下载服务启动结果无效') }
+      startedPid = platform.startService({ root, dataDirectory, mode: 'on-demand' }).pid
     }
     await delay(100)
   }
   retryAfter = Date.now() + 15000
   if (startedPid && isRunning(startedPid)) process.kill(startedPid)
-  throw new Error('本地下载服务启动超时，请从开始菜单重新连接下载助手')
+  throw new Error('本地下载服务启动超时，' + platform.installHint)
 }
 
 async function dispatch(message) {

@@ -1,10 +1,10 @@
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { safeName, srtText, toSrt } from './formats.mjs'
+import { platform } from './platform/index.mjs'
 
 const alphabet = 'FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf'
 export function convertVideoId(input) {
@@ -32,23 +32,6 @@ export function convertVideoId(input) {
   const aid = (number & 2251799813685247n) ^ 23442827791579n
   if (convertVideoId('av' + aid) !== text) throw new Error('BV 号校验失败')
   return 'av' + aid
-}
-
-export async function desktop(root, mode, params, signal) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(path.join(root, 'BewlyDownloadHost.exe'), [mode], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], signal })
-    let output = '', error = ''
-    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8')
-    child.stdout.on('data', chunk => { output += chunk })
-    child.stderr.on('data', chunk => { error = (error + chunk).slice(-1000) })
-    child.once('error', reject)
-    child.once('exit', code => {
-      if (code !== 0) { reject(new Error(error || 'Windows 操作失败')); return }
-      try { resolve(JSON.parse(output)) } catch { reject(new Error('Windows 助手返回了无效结果')) }
-    })
-    child.stdin.on('error', () => {})
-    child.stdin.end(JSON.stringify(params))
-  })
 }
 
 async function sourceFile(value, extensions) {
@@ -87,7 +70,11 @@ export class ToolJobs {
     return job
   }
   async execute(params, signal) {
-    if (params.op === 'pick') return desktop(this.root, '--desktop', { kind: params.kind, path: params.path }, signal)
+    if (params.op === 'pick') {
+      const picked = await platform.pickPath({ kind: params.kind, path: params.path })
+      if (picked && picked.unavailable) throw new Error('当前桌面缺少 zenity/kdialog，请手动输入路径')
+      return picked
+    }
     if (params.op === 'convertId') return { text: convertVideoId(params.input) }
     if (params.op === 'joinTime') {
       const data = await this.bilibili.api('https://member.bilibili.com/x2/creative/h5/calendar/event', { ts: '0' }, signal)

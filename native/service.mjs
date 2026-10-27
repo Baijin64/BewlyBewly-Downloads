@@ -1,4 +1,3 @@
-import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
@@ -8,19 +7,18 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { Aria2, Bilibili, DownloadQueue, publicTask, TaskStore, VERSION } from './core.mjs'
 import { outputLocation, validateOptions } from './formats.mjs'
-import { desktop, ToolJobs } from './tools.mjs'
+import { platform } from './platform/index.mjs'
+import { ToolJobs } from './tools.mjs'
 import { LegacyMigration } from './migration.mjs'
 import { CompletionPolicy } from './completion.mjs'
 import { ServiceLifetime } from './lifetime.mjs'
 import { writeUiSnapshot } from './snapshot.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
-export const dataDirectory = process.env.BEWLY_DOWNLOAD_DATA || path.join(process.env.LOCALAPPDATA || root, 'BewlyDownload')
+export const dataDirectory = platform.dataDirectory()
 
 export function cryptSession(mode, input) {
-  const result = spawnSync(path.join(root, 'BewlyDownloadHost.exe'), [mode], { input, windowsHide: true, encoding: 'utf8', maxBuffer: 128 * 1024 })
-  if (result.status !== 0 || result.error) throw new Error('无法保护本地登录信息，请重新安装下载助手')
-  return result.stdout.trim()
+  return mode === '--protect' ? platform.protectSecret(input) : platform.unprotectSecret(input)
 }
 
 export async function startService() {
@@ -49,7 +47,7 @@ export async function startService() {
     return
   }
   const descriptor = path.join(dataDirectory, 'connection.json')
-  const sessionPath = path.join(dataDirectory, 'session.dpapi')
+  const sessionPath = path.join(dataDirectory, platform.sessionFileName())
   let cookie = ''
   if (existsSync(sessionPath)) { try { cookie = cryptSession('--unprotect', readFileSync(sessionPath, 'utf8')) } catch { /* Browser can supply a fresh session. */ } }
   const token = randomBytes(32).toString('hex')
@@ -68,16 +66,17 @@ export async function startService() {
   let lastTrayContact = 0
   let tray
   let housekeeping
-  const headless = process.env.BEWLY_DOWNLOAD_HEADLESS === '1'
+  const headless = platform.defaults.headless ? process.env.BEWLY_DOWNLOAD_HEADLESS !== '0' : process.env.BEWLY_DOWNLOAD_HEADLESS === '1'
   const runtime = () => lifetime.snapshot(!!(queue.running.size || tools.running.size || activeRequests || policy.due), store.settings().idleExitMinutes)
   const ensureTray = () => {
-    if (headless || (tray && tray.exitCode === null)) return
-    tray = spawn(path.join(root, 'BewlyDownloadHost.exe'), ['--tray'], { detached: true, windowsHide: true, stdio: 'ignore' })
+    if (headless || !platform.supports.tray || (tray && tray.exitCode === null)) return
+    tray = platform.startTray({ root, dataDirectory })
+    if (!tray) return
     tray.once('error', () => { tray = undefined })
     tray.unref()
   }
   const begin = () => { policy.begin(store.list()); lifetime.touch() }
-  const healthInfo = () => ({ version: VERSION, protocol: 2, storageError: queue.storageError, lastTrayContact, capabilities: ['on-demand', 'pending', 'batch', 'audio-highest', 'formats', 'naming', 'collections', 'tools', 'migration', 'tray'], settings: store.settings(), engineInstalled: existsSync(path.join(bin, 'aria2c.exe')) && existsSync(path.join(bin, 'ffmpeg.exe')) })
+  const healthInfo = () => ({ version: VERSION, protocol: 2, storageError: queue.storageError, lastTrayContact, capabilities: ['on-demand', 'pending', 'batch', 'audio-highest', 'formats', 'naming', 'collections', 'tools', 'migration', ...(platform.supports.tray ? ['tray'] : []), ...(platform.supports.picker ? ['picker'] : []), ...(platform.supports.shutdown ? ['shutdown'] : [])], settings: store.settings(), engineInstalled: existsSync(platform.toolPath(bin, 'aria2c')) && existsSync(platform.toolPath(bin, 'ffmpeg')) })
   let snapshotTimer
   const saveSnapshot = () => {
     clearTimeout(snapshotTimer)
@@ -136,7 +135,7 @@ export async function startService() {
       const file = task?.output || Object.values(task?.artifacts || {})[0]
       if (task && !file && !(params.action === 'folder' && task.legacyPath)) throw new Error('任务没有输出文件')
       const target = params.action === 'folder' ? (task?.legacyPath || (file ? path.dirname(file) : store.settings().directory)) : file
-      return desktop(root, '--open', { kind: params.action, path: target })
+      return platform.openTarget({ kind: params.action, path: target })
     },
     desktopState: async () => {
       lastTrayContact = Date.now()
@@ -214,10 +213,9 @@ export async function startService() {
   housekeeping = setInterval(() => {
     const settings = store.settings(), tasks = store.list()
     const due = policy.evaluate(tasks, settings.shutdown && tools.running.size === 0)
-    if (due && due <= Date.now() && !headless) {
+    if (due && due <= Date.now() && !headless && platform.supports.shutdown) {
       policy.cancel()
-      const shutdown = spawn('shutdown.exe', ['/s', '/t', '0'], { windowsHide: true, stdio: 'ignore' })
-      shutdown.once('error', () => {})
+      platform.shutdown()
     }
     const state = runtime()
     if (state.exitAt && Date.now() >= state.exitAt) close()

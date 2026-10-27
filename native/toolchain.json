@@ -1,4 +1,5 @@
 {
+  "schema": 2,
   "releaseTag": "build-deps-20220508",
   "asset": "Bewly-Media-Tools-1.36.0-5.0.1.zip",
   "files": {
@@ -11,6 +12,53 @@
       "version": "n5.0.1-4-ga5ebb3d25e-20220508",
       "sha256": "6001ad699ca9894c01273ee22474ea7f60de642764c374d1234a9a75c41763b1",
       "upstream": "https://ffmpeg.org/"
+    }
+  },
+  "platforms": {
+    "win32-x64": {
+      "releaseTag": "build-deps-20220508",
+      "asset": "Bewly-Media-Tools-1.36.0-5.0.1.zip",
+      "files": {}
+    },
+    "darwin-arm64": {
+      "releaseTag": "build-deps-2026-posix",
+      "asset": "Bewly-Media-Tools-darwin-arm64.tar.gz",
+      "build": "scripts/toolchain/build-posix-tools.sh",
+      "sources": {
+        "aria2": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.gz",
+        "ffmpeg": "https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz"
+      },
+      "files": {}
+    },
+    "darwin-x64": {
+      "releaseTag": "build-deps-2026-posix",
+      "asset": "Bewly-Media-Tools-darwin-x64.tar.gz",
+      "build": "scripts/toolchain/build-posix-tools.sh",
+      "sources": {
+        "aria2": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.gz",
+        "ffmpeg": "https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz"
+      },
+      "files": {}
+    },
+    "linux-x64": {
+      "releaseTag": "build-deps-2026-posix",
+      "asset": "Bewly-Media-Tools-linux-x64.tar.gz",
+      "build": "scripts/toolchain/build-posix-tools.sh",
+      "sources": {
+        "aria2": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.gz",
+        "ffmpeg": "https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz"
+      },
+      "files": {}
+    },
+    "linux-arm64": {
+      "releaseTag": "build-deps-2026-posix",
+      "asset": "Bewly-Media-Tools-linux-arm64.tar.gz",
+      "build": "scripts/toolchain/build-posix-tools.sh",
+      "sources": {
+        "aria2": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.gz",
+        "ffmpeg": "https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz"
+      },
+      "files": {}
     }
   }
 }

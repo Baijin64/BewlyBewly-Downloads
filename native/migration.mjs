@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
@@ -7,6 +6,7 @@ import path from 'node:path'
 import { ClassicLevel } from 'classic-level'
 
 import { validateOptions } from './formats.mjs'
+import { platform } from './platform/index.mjs'
 
 const keys = new Set(['setting', 'defaultDownPath', 'renameRule', 'folderRenameRule', 'createFolder', 'createFolderAddIndex'])
 function chromiumString(value) {
@@ -45,10 +45,7 @@ export function mapLegacySettings(values) {
 }
 
 export async function readLegacySettings(profile, dataDirectory, { checkRunning = true } = {}) {
-  if (checkRunning && process.platform === 'win32') {
-    const processes = execFileSync('tasklist.exe', ['/FI', 'IMAGENAME eq Bilidown.exe', '/FO', 'CSV', '/NH'], { windowsHide: true, encoding: 'utf8' })
-    if (/"bilidown\.exe"/i.test(processes)) throw new Error('请先退出旧版 Bilidown，再读取配置，避免复制到使用中的数据库')
-  }
+  if (checkRunning && platform.isLegacyAppRunning()) throw new Error('请先退出旧版 Bilidown，再读取配置，避免复制到使用中的数据库')
   const source = path.join(profile, 'Local Storage', 'leveldb')
   if (!existsSync(path.join(source, 'CURRENT'))) throw new Error('没有找到旧版 Bilidown 配置')
   await mkdir(dataDirectory, { recursive: true })
@@ -114,7 +111,9 @@ export class LegacyMigration {
     let settings
     const warnings = ['不迁移登录信息。自动关机与剪贴板监听保持关闭，可在新设置中主动启用。', '旧版窗口的关闭方式不迁移；新助手继续使用已选择的后台与托盘设置。']
     let records = [], invalid = 0
-    const profile = path.resolve(params.profile || path.join(process.env.APPDATA || '', 'bilidown'))
+    const legacyProfile = platform.legacyProfile()
+    if (!params.profile && !legacyProfile) throw new Error('当前平台没有旧版 Bilidown 数据，可通过导出文件导入历史')
+    const profile = path.resolve(params.profile || legacyProfile)
     if (params.settings !== false) settings = await readLegacySettings(profile, this.dataDirectory)
     if (params.historyFile) {
       if (typeof params.historyFile !== 'string' || !path.isAbsolute(params.historyFile) || path.extname(params.historyFile).toLowerCase() !== '.bilidownexport') throw new Error('请选择原版导出的 .bilidownexport 文件')

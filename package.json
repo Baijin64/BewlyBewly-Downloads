@@ -9,7 +9,10 @@
   "homepage": "https://github.com/Baijin64/BewlyBewly-Downloads",
   "scripts": {
     "test:download": "node --test native/tests/*.test.mjs",
-    "build:helper": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1",
+    "build:helper": "node scripts/build-helper.mjs",
+    "build:helper:windows": "node scripts/build-helper.mjs --target win32-x64",
+    "build:helper:linux": "node scripts/build-helper.mjs --target linux-x64",
+    "build:helper:macos": "node scripts/build-helper.mjs --target darwin-arm64",
     "pack:downloads": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/pack-downloads.ps1",
     "dev": "npm run clear && cross-env NODE_ENV=development run-p dev:*",
     "dev-firefox": "npm run clear-firefox && cross-env NODE_ENV=development FIREFOX=true run-p dev:*",

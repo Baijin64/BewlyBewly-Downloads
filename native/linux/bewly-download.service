@@ -1,0 +1,15 @@
+[Unit]
+Description=Bewly download helper
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=@NODE@ --no-warnings @APP@/service-entry.mjs
+Environment=BEWLY_DOWNLOAD_DATA=@DATA@
+Environment=BEWLY_DOWNLOAD_MODE=manual
+Environment=BEWLY_DOWNLOAD_HEADLESS=1
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

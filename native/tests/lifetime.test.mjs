@@ -11,9 +11,10 @@ import { fileURLToPath } from 'node:url'
 import { ServiceLifetime } from '../lifetime.mjs'
 import { writeUiSnapshot } from '../snapshot.mjs'
 import { uiTask } from '../ui-task.mjs'
+import { hostExecutable, stageRoot } from './support/host.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const helper = path.join(root, 'dist/helper-msix'), exe = path.join(helper, 'BewlyDownloadHost.exe')
+const helper = stageRoot(), exe = hostExecutable()
 const origin = 'chrome-extension://' + JSON.parse(readFileSync(path.join(root, 'native/identity.json'), 'utf8')).extensionId + '/'
 const info = { bvid: 'BV17x411w7KC', title: 'Lifecycle fixture', cover: '', author: 'Fixture', pages: [{ cid: 42, page: 1, title: 'Lifecycle fixture', duration: 1 }] }
 const frame = value => { const data = Buffer.from(JSON.stringify(value)), header = Buffer.alloc(4); header.writeUInt32LE(data.length); return Buffer.concat([header, data]) }
@@ -129,7 +130,7 @@ test('a pending-only service exits despite polling and its live native bridge ex
   assert.equal(JSON.parse(readFileSync(path.join(directory, 'ui-snapshot.json'), 'utf8')).counts.pending, 1)
 })
 
-test('manual Windows launch promotes an existing on-demand service without replacing it', { skip: !existsSync(exe), timeout: 20000 }, async t => {
+test('manual Windows launch promotes an existing on-demand service without replacing it', { skip: process.platform !== 'win32' || !existsSync(exe), timeout: 20000 }, async t => {
   const directory = await temporary(t)
   const reply = invoke(directory, { method: 'health', allowStart: true })
   assert.equal(reply.runtime.mode, 'on-demand')

@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
 import { mkdir, rename, rm, stat, writeFile, open, unlink } from 'node:fs/promises'
@@ -9,15 +8,13 @@ import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { safeName, validateOptions, outputLocation, selectStreams, toSrt, toAss, toNfo } from './formats.mjs'
+import { platform } from './platform/index.mjs'
 export { safeName, validateOptions, toSrt } from './formats.mjs'
 
 export const VERSION = '0.2.8'
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
 const activeStates = new Set(['resolving', 'downloading', 'muxing', 'postprocessing'])
 export const defaults = { directory: path.join(homedir(), 'Downloads', 'Bilibili'), maxConcurrent: 2 }
-function spawnMediaTool(bin, name, args, options) {
-  return spawn(path.join(path.dirname(bin), 'BewlyDownloadHost.exe'), ['--run-tool', name, ...args], options)
-}
 
 export function videoId(value) {
   if (typeof value !== 'string') throw new Error('缺少视频链接')
@@ -224,7 +221,11 @@ export class Aria2 {
     if (this.child && this.child.exitCode === null) return
     this.starting = (async () => {
       this.port = await freePort()
-      this.child = spawnMediaTool(this.bin, 'aria2c', ['--no-conf=true', '--enable-rpc=true', '--rpc-listen-all=false', '--rpc-allow-origin-all=false', `--rpc-listen-port=${this.port}`, `--rpc-secret=${this.secret}`, '--check-certificate=true', '--continue=true', '--auto-file-renaming=false', '--allow-overwrite=true', '--file-allocation=none', '--max-concurrent-downloads=8', '--console-log-level=error', '--summary-interval=0'], { windowsHide: true, stdio: 'ignore' })
+      const toolOptions = ['--no-conf=true', '--enable-rpc=true', '--rpc-listen-all=false', '--rpc-allow-origin-all=false', `--rpc-listen-port=${this.port}`, `--rpc-secret=${this.secret}`, '--check-certificate=true', '--continue=true', '--auto-file-renaming=false', '--allow-overwrite=true', '--file-allocation=none', '--max-concurrent-downloads=8', '--console-log-level=error', '--summary-interval=0']
+      // POSIX: tie aria2's lifetime to this daemon. detached spawn alone would
+      // leave an orphaned downloader behind if the service crashes.
+      if (process.platform !== 'win32') toolOptions.push('--stop-with-process=' + process.pid)
+      this.child = platform.mediaSpawn(this.bin, 'aria2c', toolOptions, { windowsHide: true, stdio: 'ignore' })
       let launchError
       this.child.once('error', error => { launchError = error })
       for (let attempt = 0; attempt < 60; attempt++) {
@@ -243,7 +244,7 @@ export class Aria2 {
     return data.result
   }
 
-  close() { this.child?.kill() }
+  close() { platform.killTree(this.child) }
 }
 
 export class DownloadQueue {
@@ -401,7 +402,7 @@ export class DownloadQueue {
 
   async ffmpeg(args, signal) {
     await new Promise((resolve, reject) => {
-      const child = spawnMediaTool(this.bin, 'ffmpeg', ['-hide_banner', '-nostdin', '-y', ...args], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], signal })
+      const child = platform.mediaSpawn(this.bin, 'ffmpeg', ['-hide_banner', '-nostdin', '-y', ...args], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], signal })
       let stderr = ''
       child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-3000) })
       child.once('error', reject)

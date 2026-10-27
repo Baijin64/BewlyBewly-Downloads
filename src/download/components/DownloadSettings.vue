@@ -47,7 +47,7 @@ async function connect(probe = false) {
   try {
     helper.value = await downloadRequest<HelperStatus>('health', { connect: probe })
     if ((helper.value.protocol || 1) < 2)
-      throw new Error('完整配置需要 0.2.0 或更新的助手，请更新 MSIX 后重试。')
+      throw new Error('完整配置需要 0.2.0 或更新的助手，请更新后重试。')
     form.value = JSON.parse(JSON.stringify(helper.value.settings))
     options.value = normalizeDownloadOptions(
       helper.value.settings.defaultOptions || downloadPreferences.value,
@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
         :desc="
           helper
             ? `${helper.deferred ? '按需待连接' : '已连接'} · ${helper.version}`
-            : '首次安装 MSIX 后，从开始菜单打开一次完成连接。'
+            : '首次安装后，打开下载助手一次完成连接。'
         "
       >
         <Button :disabled="busy" @click="connect(true)">
@@ -259,7 +259,7 @@ onBeforeUnmount(() => {
         <SettingsItem title="允许按需启动助手" desc="实际下载、加入队列或使用本地功能时启动；空闲后自动退出。关闭后会先询问。">
           <Radio v-model="helperAutoStart" aria-label="允许按需启动助手" />
         </SettingsItem>
-        <SettingsItem title="Windows 手动启动后的空闲退出" desc="从开始菜单打开助手时默认常驻；浏览器按需启动不受此选项影响。">
+        <SettingsItem title="助手手动启动后的空闲退出" desc="手动打开助手时默认常驻；浏览器按需启动不受此选项影响。">
           <Select
             v-model="form.idleExitMinutes"
             :options="[

@@ -44,7 +44,7 @@ test('slim payload excludes Node and foreign prebuilds while resolving a compati
   assert.equal(report.runtime.executable.toLowerCase(), process.execPath.toLowerCase())
 })
 
-test('bootstrap and missing-runtime errors work without Node, a daemon or user data access', async t => {
+test('bootstrap and missing-runtime errors work without Node, a daemon or user data access', { skip: process.platform !== 'win32' }, async t => {
   const directory = await temporary(t), data = path.join(directory, 'data')
   const env = { BEWLY_NODE_PATH: path.join(directory, 'missing/node.exe'), BEWLY_DOWNLOAD_DATA: data, BEWLY_DOWNLOAD_HEADLESS: '1' }
   const input = Buffer.concat([frame({ method: 'bootstrapStatus', requestId: 1 }), frame({ method: 'health', requestId: 2 })])
@@ -59,7 +59,7 @@ test('bootstrap and missing-runtime errors work without Node, a daemon or user d
   assert.equal(forbidden.status, 2); assert.equal(forbidden.stdout.length, 0)
 })
 
-test('bootstrap-to-live bridge preserves frames and uses the selected system Node for the daemon', async t => {
+test('bootstrap-to-live bridge preserves frames and uses the selected system Node for the daemon', { skip: process.platform !== 'win32' }, async t => {
   const directory = await temporary(t), data = path.join(directory, 'data')
   const input = Buffer.concat([frame({ method: 'bootstrapStatus', requestId: 1 }), frame({ method: 'health', requestId: 2, allowStart: true }), frame({ method: 'bootstrapStatus', requestId: 3 })])
   const result = invoke([origin], { BEWLY_NODE_PATH: process.execPath, BEWLY_DOWNLOAD_DATA: data, BEWLY_DOWNLOAD_HEADLESS: '1', NODE_OPTIONS: '--require=Z:/must-not-load.cjs' }, input)
@@ -72,7 +72,7 @@ test('bootstrap-to-live bridge preserves frames and uses the selected system Nod
   assert.ok(existsSync(path.join(data, 'connection.json')))
 })
 
-test('runtime detection rejects old versions and wrong architectures', async t => {
+test('runtime detection rejects old versions and wrong architectures', { skip: process.platform !== 'win32' }, async t => {
   const directory = await temporary(t), fake = path.join(directory, 'node.exe'), source = path.join(directory, 'FakeNode.cs')
   // Keep the fixture executable independent from the real Node installation.
   writeFileSync(source, `using System; using System.Web.Script.Serialization; class FakeNode { static void Main() { Console.WriteLine(new JavaScriptSerializer().Serialize(new { version = Environment.GetEnvironmentVariable("TEST_NODE_VERSION"), architecture = Environment.GetEnvironmentVariable("TEST_NODE_ARCH"), fetch = true, abort = true })); } }`)
@@ -86,7 +86,7 @@ test('runtime detection rejects old versions and wrong architectures', async t =
   }
 })
 
-test('Node installer release selection accepts only the official Node 24 x64 MSI filename', () => {
+test('Node installer release selection accepts only the official Node 24 x64 MSI filename', { skip: process.platform !== 'win32' }, () => {
   const hash = 'a'.repeat(64)
   const good = invoke(['--node-release-diagnostics'], {}, Buffer.from(`${hash}  node-v24.21.0-x64.msi\r\n`))
   assert.equal(good.status, 0)
@@ -95,7 +95,7 @@ test('Node installer release selection accepts only the official Node 24 x64 MSI
     assert.equal(invoke(['--node-release-diagnostics'], {}, Buffer.from(`${hash}  ${name}\n`)).status, 1)
 })
 
-test('native Node setup layout fits the current DPI without showing a window', async t => {
+test('native Node setup layout fits the current DPI without showing a window', { skip: process.platform !== 'win32' }, async t => {
   const directory = await temporary(t)
   const result = invoke(['--node-setup-preview', path.join(directory, 'setup.png')])
   assert.equal(result.status, 0, result.stderr.toString())
@@ -106,7 +106,7 @@ test('native Node setup layout fits the current DPI without showing a window', a
   assert.equal(existsSync(path.join(directory, 'data')), false)
 })
 
-test('terminating the media connector also terminates its own FFmpeg child', { timeout: 12000 }, async t => {
+test('terminating the media connector also terminates its own FFmpeg child', { timeout: 12000, skip: process.platform !== 'win32' }, async t => {
   const wrapper = spawn(host, ['--run-tool', 'ffmpeg', '-nostdin', '-re', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '60', '-f', 'null', '-'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
   let mediaPid
   const running = pid => { try { process.kill(pid, 0); return true } catch { return false } }

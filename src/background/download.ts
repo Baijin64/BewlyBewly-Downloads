@@ -1,5 +1,6 @@
 import browser from 'webextension-polyfill'
 
+import { helperInstallHint, helperStartHint, helperUpdateHint } from '../download/platform'
 import type { DownloadMethod, DownloadOptions, DownloadReply, DownloadTask, HelperStatus } from '../download/types'
 import { cachedHealth, cachedPreview, cachedTasks, downloadSnapshot, helperConnected, markHelperOffline, rememberReply } from './downloadCache'
 import { biliApi, inspectDownload, inspectFormats, inspectQualities, inspectSubtitles, resolveDownload } from './downloadResolver'
@@ -33,9 +34,9 @@ async function nativeRequest(method: DownloadMethod | 'expandLink', params: Reco
       return boot
     const [major, minor, patch] = boot.result.connectorVersion.split('.').map(Number)
     if (!Number.isFinite(patch) || (major === 0 && (minor < 2 || (minor === 2 && patch < 8))))
-      return { ok: false, error: '按需启动需要下载助手 0.2.8 或更新版本，请更新 MSIX。' }
+      return { ok: false, error: helperUpdateHint() }
     if (!boot.result.runtime.ready)
-      return { ok: false, error: boot.result.runtime.reason || '请从 Windows 开始菜单打开下载助手，安装 Node.js 后重试。' }
+      return { ok: false, error: boot.result.runtime.reason || helperStartHint() }
   }
   const message = { method, params, allowStart, ...(session === undefined ? {} : { session }) }
   let reply = await requestNativeDownload(message)
@@ -171,6 +172,6 @@ async function handle(message: { method: DownloadMethod, params: Record<string, 
   catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     const missing = /specified native|native.*not found|native.*forbidden/i.test(detail)
-    return { ok: false, error: missing ? '请先安装 Bewly 下载助手，并从开始菜单打开一次完成浏览器连接。然后点击重试。' : detail }
+    return { ok: false, error: missing ? helperInstallHint() : detail }
   }
 }

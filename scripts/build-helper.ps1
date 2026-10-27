@@ -84,16 +84,27 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'native\windows\NativeHost.config
 $desktopSources = @('NativeHost.cs','TrayHost.cs','TrayArtwork.cs','DesktopUi.cs','NodeRuntime.cs','NodeInstaller.cs','BundledTool.cs') | ForEach-Object { Join-Path $projectRoot "native\windows\$_" }
 & $compiler /nologo /target:winexe /platform:x64 /codepage:65001 /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Security.dll "/win32manifest:$projectRoot\native\windows\NativeHost.manifest" "/win32icon:$stage\Assets\BewlyDownload.ico" "/out:$stage\BewlyDownloadHost.exe" $desktopSources
 if ($LASTEXITCODE -ne 0) { throw 'Native host compilation failed.' }
-Add-Type -AssemblyName System.Drawing
-$icon = [TrayArtwork]::Bitmap(512)
-try {
-    foreach ($entry in @(@('StoreLogo.png',50),@('Square44x44Logo.png',44),@('Square150x150Logo.png',150))) {
-        $image = New-Object System.Drawing.Bitmap ([int]$entry[1]),([int]$entry[1])
-        $graphics = [System.Drawing.Graphics]::FromImage($image)
-        try { $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic; $graphics.DrawImage($icon,0,0,[int]$entry[1],[int]$entry[1]); $image.Save((Join-Path $stage "Assets\$($entry[0])"),[System.Drawing.Imaging.ImageFormat]::Png) }
-        finally { $graphics.Dispose(); $image.Dispose() }
-    }
-} finally { $icon.Dispose() }
+# MSIX tile assets: every size is rendered natively by TrayArtwork (vector metrics, never
+# downscaled from a master bitmap). Scale variants let Start menu and the Store listing pick
+# a crisp asset at 100%-400% DPI instead of upscaling the 150 px base image.
+$assetSet = [ordered]@{
+    'StoreLogo.png' = 50
+    'StoreLogo.scale-200.png' = 100
+    'Square44x44Logo.png' = 44
+    'Square44x44Logo.scale-125.png' = 55
+    'Square44x44Logo.scale-150.png' = 66
+    'Square44x44Logo.scale-200.png' = 88
+    'Square44x44Logo.scale-400.png' = 176
+    'Square150x150Logo.png' = 150
+    'Square150x150Logo.scale-125.png' = 188
+    'Square150x150Logo.scale-150.png' = 225
+    'Square150x150Logo.scale-200.png' = 300
+    'Square150x150Logo.scale-400.png' = 600
+}
+foreach ($entry in $assetSet.GetEnumerator()) {
+    $image = [TrayArtwork]::Bitmap([int]$entry.Value)
+    try { $image.Save((Join-Path $stage "Assets\$($entry.Key)"), [System.Drawing.Imaging.ImageFormat]::Png) } finally { $image.Dispose() }
+}
 $packageManifest = [xml](Get-Content -LiteralPath (Join-Path $stage 'AppxManifest.xml') -Raw)
 $helperVersion = ([version]$packageManifest.Package.Identity.Version).ToString(3)
 if ($StageOnly) { Write-Output "Unpacked test helper: $stage"; return }

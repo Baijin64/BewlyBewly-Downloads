@@ -14,9 +14,10 @@ import { ClassicLevel } from 'classic-level'
 import { DownloadQueue, TaskStore } from '../core.mjs'
 import { LegacyMigration, parseLegacyHistory, readLegacySettings } from '../migration.mjs'
 import { convertVideoId, ToolJobs } from '../tools.mjs'
+import { stageRoot, toolPath } from './support/host.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const helper = path.join(root, 'dist/helper-msix')
+const helper = stageRoot()
 const bin = path.join(helper, 'bin')
 const identity = JSON.parse(readFileSync(path.join(root, 'native/identity.json'), 'utf8'))
 async function temporary(t) {
@@ -134,7 +135,7 @@ test('local tools convert subtitles and preserve existing outputs', async (t) =>
   store.close()
 })
 
-test('real auxiliary MP3 conversion and manual mux preserve source files', { skip: !existsSync(path.join(bin, 'ffmpeg.exe')), timeout: 10000 }, async (t) => {
+test('real auxiliary MP3 conversion and manual mux preserve source files', { skip: !existsSync(toolPath('ffmpeg')), timeout: 10000 }, async (t) => {
   const directory = await temporary(t), store = new TaskStore(path.join(directory, 'data'))
   const queue = new DownloadQueue({ store, bin, dataDirectory: directory }), jobs = new ToolJobs({ store, queue, root: helper })
   const ffmpeg = path.join(bin, 'ffmpeg.exe'), audio = path.join(directory, 'source.m4a'), video = path.join(directory, 'source.mp4')

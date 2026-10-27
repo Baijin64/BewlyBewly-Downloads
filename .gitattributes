@@ -1,0 +1,16 @@
+* text=auto
+
+# Native messaging hosts are executed directly by Chromium; CRLF breaks the shebang.
+*.sh text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.swift text eol=lf
+*.service text eol=lf
+*.plist text eol=lf
+*.json text eol=lf
+
+*.png binary
+*.jpg binary
+*.woff2 binary
+*.ico binary

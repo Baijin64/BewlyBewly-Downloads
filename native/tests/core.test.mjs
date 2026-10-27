@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import { Aria2, Bilibili, DownloadQueue, publicTask, safeName, TaskStore, toSrt, validateOptions, validatePrepared, videoId } from '../core.mjs'
+import { toolPath } from './support/host.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const helper = process.env.BEWLY_NATIVE_TEST_ROOT || path.join(root, 'dist', 'helper-msix')
@@ -184,7 +185,7 @@ test('native host replies on an OPEN input pipe, reuses one daemon, then exits o
   await Promise.race([streamsClosed, delay(3000).then(() => { throw new Error('The daemon inherited native messaging pipe handles') })])
 })
 
-test('real aria2 pauses, resumes partial data, and FFmpeg merges synthetic media', { skip: !existsSync(path.join(root, 'dist', 'helper-msix', 'bin', 'ffmpeg.exe')), timeout: 30000 }, async (t) => {
+test('real aria2 pauses, resumes partial data, and FFmpeg merges synthetic media', { skip: !existsSync(toolPath('ffmpeg')), timeout: 30000 }, async (t) => {
   const directory = await temporary(t)
   // Fixture generation runs outside MSIX. Installed media execution is covered
   // separately through the authenticated service in verify-download-live.mjs.

@@ -10,10 +10,11 @@ import { fileURLToPath } from 'node:url'
 
 import { Bilibili, DownloadQueue, TaskStore } from '../core.mjs'
 import { outputLocation, selectStreams, srtText, toAss, toNfo, validateOptions } from '../formats.mjs'
+import { stageRoot } from './support/host.mjs'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const bin = path.join(root, 'dist/helper-msix/bin')
+const bin = path.join(stageRoot(), 'bin')
 const info = { bvid: 'BV1GJ411x7h7', title: '系列视频', author: 'UP', uid: 123, pubdate: 1700000000, cover: 'https://i0.hdslb.com/cover.png', description: '<内容 & 说明>', pages: [{ cid: 42, page: 1, title: '第一集', duration: 1 }] }
 async function temporary(t) {
   const directory = mkdtempSync(path.join(tmpdir(), 'bewly-parity-'))
