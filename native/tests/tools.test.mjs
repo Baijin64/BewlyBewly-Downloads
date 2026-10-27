@@ -140,7 +140,7 @@ test('real auxiliary MP3 conversion and manual mux preserve source files', { ski
   const queue = new DownloadQueue({ store, bin, dataDirectory: directory }), jobs = new ToolJobs({ store, queue, root: helper })
   const ffmpeg = toolPath('ffmpeg'), audio = path.join(directory, 'source.m4a'), video = path.join(directory, 'source.mp4')
   execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '0.2', '-c:a', 'aac', audio], { windowsHide: true })
-  execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.2', '-c:v', 'libx264', '-an', video], { windowsHide: true })
+  execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.2', '-c:v', 'mpeg4', '-an', video], { windowsHide: true })
   const mp3 = await jobs.execute({ op: 'audioToMp3', source: audio, directory: path.join(directory, 'output') }, new AbortController().signal)
   const mux = await jobs.execute({ op: 'mux', audio, video, directory: path.join(directory, 'output') }, new AbortController().signal)
   assert.ok(existsSync(mp3.path)); assert.ok(existsSync(mux.path)); assert.ok(existsSync(audio)); assert.ok(existsSync(video))

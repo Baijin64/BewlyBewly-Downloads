@@ -129,7 +129,7 @@ test('real FFmpeg produces every combined media and attachment output, with safe
   const directory = await temporary(t), store = new TaskStore(path.join(directory, 'data'))
   store.settings({ directory: path.join(directory, 'output'), maxConcurrent: 1 })
   const ffmpeg = path.join(bin, 'ffmpeg.exe')
-  execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.4', '-c:v', 'libx264', '-an', path.join(directory, 'video.mp4')], { windowsHide: true })
+  execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.4', '-c:v', 'mpeg4', '-an', path.join(directory, 'video.mp4')], { windowsHide: true })
   execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '0.4', '-c:a', 'aac', path.join(directory, 'audio.m4a')], { windowsHide: true })
   const queue = new DownloadQueue({ store, dataDirectory: path.join(directory, 'data'), bin, aria2: { ready: async () => {} }, fetcher: async () => new Response(readFileSync(path.join(root, 'assets/icon-512.png')), { headers: { 'Content-Type': 'image/png' } }), bilibili: {
     resolve: async () => ({ video: { quality: 80, codec: 7 }, audio: { id: 30280 } }),
@@ -162,7 +162,7 @@ test('Hi-Res is remuxed to MKV and native FLAC without transcoding', { skip: !ex
   store.settings({ directory: path.join(directory, 'output') })
   const ffmpeg = path.join(bin, 'ffmpeg.exe'), audio = path.join(directory, 'source.flac'), video = path.join(directory, 'source.mp4')
   execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=96000', '-t', '0.3', '-c:a', 'flac', audio], { windowsHide: true })
-  execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.3', '-c:v', 'libx264', '-an', video], { windowsHide: true })
+  execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.3', '-c:v', 'mpeg4', '-an', video], { windowsHide: true })
   const queue = new DownloadQueue({ store, bin, dataDirectory: directory, aria2: { ready: async () => {} }, bilibili: { resolve: async () => ({ video: { quality: 80, codec: 7 }, audio: { id: 30251, codecs: 'fLaC' } }) } })
   queue.closed = true
   queue.transfer = async (_task, _urls, name, work) => { const target = path.join(work, name); await copyFile(name.startsWith('video') ? video : audio, target); return target }

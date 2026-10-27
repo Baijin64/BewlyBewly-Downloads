@@ -190,7 +190,7 @@ test('real aria2 pauses, resumes partial data, and FFmpeg merges synthetic media
   // Fixture generation runs outside MSIX. Installed media execution is covered
   // separately through the authenticated service in verify-download-live.mjs.
   const ffmpeg = toolPath('ffmpeg'), bin = path.dirname(ffmpeg)
-  execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.5', '-c:v', 'libx264', '-an', path.join(directory, 'source-video.mp4')], { windowsHide: true })
+  execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=10', '-t', '0.5', '-c:v', 'mpeg4', '-an', path.join(directory, 'source-video.mp4')], { windowsHide: true })
   execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100', '-t', '0.5', '-c:a', 'aac', path.join(directory, 'source-audio.m4a')], { windowsHide: true })
   const padding = Buffer.alloc(4 * 1024 * 1024)
   padding.writeUInt32BE(padding.length, 0); padding.write('free', 4)

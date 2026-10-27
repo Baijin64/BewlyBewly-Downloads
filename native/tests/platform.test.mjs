@@ -28,7 +28,7 @@ test('win32 adapter keeps the exact host invocation contract', () => {
 
   const media = platform.mediaSpawn('C:\\app\\native\\bin', 'aria2c', ['--version'], { windowsHide: true, stdio: 'ignore' })
   assert.equal(media.pid, 4242)
-  assert.deepEqual(tools.calls.at(-1).command, 'C:\\app\\native\\BewlyDownloadHost.exe')
+  assert.deepEqual(tools.calls.at(-1).command, path.join('C:\\app\\native', 'BewlyDownloadHost.exe'))
   assert.deepEqual(tools.calls.at(-1).args, ['--run-tool', 'aria2c', '--version'])
 
   assert.deepEqual(platform.startService({ root: 'C:\\app\\native', dataDirectory: 'C:\\data', mode: 'on-demand' }), { pid: 5151 })
