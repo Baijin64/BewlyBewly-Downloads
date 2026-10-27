@@ -59,5 +59,5 @@ fn reads_browser_local_storage_from_a_real_leveldb() {
         .iter()
         .find(|entry| entry.origin == "_file://.")
         .expect("file origin missing");
-    assert!(is_whitelisted(&file_origin.name));
+    assert!(!is_whitelisted(&file_origin.name));
 }

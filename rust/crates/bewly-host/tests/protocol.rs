@@ -324,3 +324,79 @@ fn task_lifecycle_tools_and_idle_exit_work_over_rpc() {
         "descriptor must be removed on exit"
     );
 }
+
+#[test]
+fn migration_previews_and_imports_legacy_settings() {
+    let directory = temp_directory("migration");
+    let mut child = Command::new(host_binary())
+        .arg("--service")
+        .env("BEWLY_DOWNLOAD_DATA", &directory)
+        .env("BEWLY_DOWNLOAD_MODE", "manual")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let descriptor_path = directory.join("connection.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let descriptor: Value = loop {
+        if let Ok(text) = std::fs::read_to_string(&descriptor_path) {
+            if let Ok(value) = serde_json::from_str(&text) {
+                break value;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "service did not publish a descriptor"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let port = descriptor["port"].as_u64().unwrap() as u16;
+    let token = descriptor["token"].as_str().unwrap().to_string();
+
+    // The service expects a browser profile root, not the leveldb directory.
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../bewly-store/tests/fixtures/localstorage-leveldb");
+    let profile = directory.join("profile");
+    let leveldb = profile.join("Local Storage").join("leveldb");
+    std::fs::create_dir_all(&leveldb).unwrap();
+    for entry in std::fs::read_dir(&fixture).unwrap().flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy() == "LOCK" {
+            continue;
+        }
+        std::fs::copy(entry.path(), leveldb.join(name)).unwrap();
+    }
+    let preview = call(
+        port,
+        &token,
+        "migrationPreview",
+        json!({ "profile": profile.to_string_lossy() }),
+    );
+    assert_eq!(preview["ok"], true, "{preview}");
+    let id = preview["result"]["id"].as_str().unwrap().to_string();
+    let changes = preview["result"]["changes"].as_array().unwrap();
+    assert!(changes
+        .iter()
+        .any(|change| change["key"] == "maxConcurrent"));
+    assert_eq!(preview["result"]["warnings"].as_array().unwrap().len(), 2);
+
+    let imported = call(
+        port,
+        &token,
+        "migrationImport",
+        json!({ "id": id, "keys": ["maxConcurrent", "defaultOptions"] }),
+    );
+    assert_eq!(imported["ok"], true, "{imported}");
+    assert_eq!(imported["result"]["settings"], 2);
+
+    let health = call(port, &token, "health", json!({}));
+    assert_eq!(health["result"]["settings"]["maxConcurrent"], 4);
+    assert_eq!(
+        health["result"]["settings"]["defaultOptions"]["quality"],
+        112
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}

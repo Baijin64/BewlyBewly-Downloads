@@ -24,7 +24,7 @@ await level.put(key('defaultDownPath'), encode(path.join('C:\\Users\\Test', '视
 await level.put(key('renameRule'), encode('%index:01%-%title%'))
 await level.put(key('createFolder'), encode('true'))
 await level.put(Buffer.concat([Buffer.from('_app://.\x00'), Buffer.from([1]), Buffer.from('user', 'latin1')]), Buffer.from([255, 255, 255]))
-await level.put(Buffer.concat([Buffer.from('_file://.\x00'), Buffer.from([1]), Buffer.from('setting', 'latin1')]), encode('{"videoQn":"80"}'))
+await level.put(Buffer.concat([Buffer.from('_file://.\x00'), Buffer.from([1]), Buffer.from('session', 'latin1')]), encode('{"loggedIn":true}'))
 // Force the memtable into an .ldb table so the fixture exercises both the log and
 // the block format a real browser profile contains.
 await level.compactRange(Buffer.from('_'), Buffer.from('_\xff'))

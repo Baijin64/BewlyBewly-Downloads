@@ -11,6 +11,7 @@ axum = "0.8"
 bewly-core = { path = "../bewly-core" }
 bewly-proto = { path = "../bewly-proto" }
 bewly-store = { path = "../bewly-store" }
+rusty-leveldb = "3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 subtle = "2"

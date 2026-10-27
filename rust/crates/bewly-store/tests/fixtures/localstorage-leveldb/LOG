@@ -1,0 +1,4 @@
+Recovered manifest with next_file=7 manifest_num=6 log_num=4 prev_log_num=0 last_seq=6
+reusing manifest "C:\\Users\\Yidong Derek Li\\BewlyBewly\\rust\\crates\\bewly-store\\tests/fixtures/localstorage-leveldb\\MANIFEST-000002"
+Recovering log file "\\\\?\\C:\\Users\\Yidong Derek Li\\BewlyBewly\\rust\\crates\\bewly-store\\tests\\fixtures\\localstorage-leveldb\\000004.log"
+reusing log file "\\\\?\\C:\\Users\\Yidong Derek Li\\BewlyBewly\\rust\\crates\\bewly-store\\tests\\fixtures\\localstorage-leveldb\\000004.log"

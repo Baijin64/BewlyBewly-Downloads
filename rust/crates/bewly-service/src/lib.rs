@@ -2,6 +2,7 @@
 
 pub mod health;
 pub mod lifetime;
+pub mod migration;
 pub mod server;
 pub mod settings;
 pub mod tasks;

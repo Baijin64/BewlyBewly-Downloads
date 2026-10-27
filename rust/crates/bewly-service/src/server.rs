@@ -293,6 +293,103 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
                 "shutdownDue": 0,
             }))
         }
+        "migrationPreview" => {
+            let preview = crate::migration::preview(&state.data_directory, params)?;
+            let settings = preview.get("settings").cloned().unwrap_or(Value::Null);
+            let current = serde_json::to_value(state.settings()).unwrap_or_else(|_| json!({}));
+            let changes: Vec<Value> = settings
+                .as_object()
+                .map(|object| {
+                    object
+                        .iter()
+                        .map(|(key, value)| {
+                            json!({
+                                "key": key,
+                                "before": current.get(key).cloned().unwrap_or(Value::Null),
+                                "after": value,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let id = uuid::Uuid::new_v4().to_string();
+            let stored = json!({
+                "id": id,
+                "settings": settings,
+                "records": [],
+                "createdAt": now_ms(),
+            });
+            state
+                .store()
+                .put_preview(&id, &stored)
+                .map_err(|error| error.to_string())?;
+            Ok(json!({
+                "id": id,
+                "profile": preview["profile"],
+                "changes": changes,
+                "total": 0,
+                "duplicate": 0,
+                "invalid": 0,
+                "missingDirectories": 0,
+                "warnings": preview["warnings"],
+                "sample": [],
+            }))
+        }
+        "migrationImport" => {
+            let id = params
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or("迁移预览不存在，请重新读取")?;
+            let stored = state
+                .store()
+                .get_preview(id)
+                .map_err(|error| error.to_string())?
+                .ok_or("迁移预览不存在，请重新读取")?;
+            let created = stored.get("createdAt").and_then(Value::as_i64).unwrap_or(0);
+            if now_ms() - created > 30 * 60_000 {
+                return Err("迁移预览已过期，请重新读取".into());
+            }
+            let keys: Vec<String> = params
+                .get("keys")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let settings = stored
+                .get("settings")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            for key in &keys {
+                if !settings.contains_key(key) {
+                    return Err("无效配置选择".into());
+                }
+            }
+            if !keys.is_empty() {
+                let mut patch = serde_json::Map::new();
+                for key in &keys {
+                    patch.insert(key.clone(), settings[key].clone());
+                }
+                let next = apply(&state.settings(), &Value::Object(patch))?;
+                state.persist_settings(&next)?;
+                *state.settings.write().expect("settings lock") = next;
+            }
+            state
+                .store()
+                .remove_preview(id)
+                .map_err(|error| error.to_string())?;
+            state.save_snapshot();
+            Ok(json!({
+                "imported": 0,
+                "duplicate": 0,
+                "restoredCovers": 0,
+                "settings": keys.len(),
+            }))
+        }
         "taskAction" => task_action(state, params),
         "batchAction" => batch_action(state, params),
         "tool" => tool_request(state, params),
