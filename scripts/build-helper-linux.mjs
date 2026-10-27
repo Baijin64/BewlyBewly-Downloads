@@ -27,9 +27,11 @@ function copyModules(repoRoot, appRoot, target) {
     const target_ = path.join(destination, entry.name)
     cpSync(source, target_, {
       recursive: true,
+      dereference: true,
       filter: file => {
         const relative = path.relative(modules, file).split(path.sep).join('/')
         if (SKIP_DIRS.test(relative) || SKIP_FILE.test(relative)) return false
+        if (relative.includes('/.bin')) return false
         if (relative.includes('/prebuilds/')) {
           const parts = relative.split('/')
           const index = parts.indexOf('prebuilds')

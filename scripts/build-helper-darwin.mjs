@@ -35,9 +35,13 @@ function copyModules(repoRoot, appRoot) {
     if (!entry.isDirectory()) continue
     cpSync(path.join(modules, entry.name), path.join(destination, entry.name), {
       recursive: true,
+      dereference: true,
       filter: file => {
         const relative = path.relative(modules, file).split(path.sep).join('/')
         if (SKIP_DIRS.test(relative) || SKIP_FILE.test(relative)) return false
+        // .bin holds symlinks that point outside the bundle; codesign rejects them
+        // and the runtime resolves packages by name, not through PATH shims.
+        if (relative.includes('/.bin')) return false
         if (relative.includes('/prebuilds/')) return relative.includes('/prebuilds/darwin-x64+arm64')
         return true
       },
