@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url), JSZip = require('jszip')
 const extensionVersion = JSON.parse(await readFile('package.json', 'utf8')).version
-const helperVersion = JSON.parse(await readFile('native/package.json', 'utf8')).version
+const helperVersion = /\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/.exec(await readFile('rust/Cargo.toml', 'utf8'))[1]
 const extension = `BewlyBewly-Downloads-${extensionVersion}-candidate`
 const bundle = `Bewly-Downloads-${extensionVersion}-helper-${helperVersion}-test-bundle`
 let progressEvidence

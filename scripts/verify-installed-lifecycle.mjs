@@ -30,7 +30,7 @@ async function rpc(method, params = {}) {
   return result
 }
 let host, timer
-const report = { helperVersion: JSON.parse(readFileSync('native/package.json')).version, checkedAt: new Date().toISOString(), productionDataTouched: false }
+const report = { helperVersion: /\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/.exec(readFileSync('rust/Cargo.toml', 'utf8'))[1], checkedAt: new Date().toISOString(), productionDataTouched: false }
 try {
   const passive = spawnSync(alias, [origin], { env, input: frame({ method: 'health' }), windowsHide: true, timeout: 15000 })
   assert.equal(passive.status, 0)

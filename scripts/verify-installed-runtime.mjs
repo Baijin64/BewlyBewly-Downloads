@@ -11,7 +11,7 @@ const installedRoot = process.argv[2]
 assert.ok(installedRoot && path.isAbsolute(installedRoot) && installedRoot.includes('WindowsApps'))
 const alias = path.join(process.env.LOCALAPPDATA, 'Microsoft/WindowsApps/BewlyDownloadHost.exe')
 const identity = JSON.parse(await readFile('platforms/identity.json', 'utf8'))
-const version = JSON.parse(await readFile('native/package.json', 'utf8')).version
+const version = /\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/.exec(await readFile('rust/Cargo.toml', 'utf8'))[1]
 const directory = await mkdtemp(path.join(tmpdir(), 'bewly-installed-runtime-'))
 const data = path.join(directory, 'data')
 const env = { ...process.env, BEWLY_DOWNLOAD_DATA: data, BEWLY_DOWNLOAD_HEADLESS: '1' }

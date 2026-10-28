@@ -53,20 +53,12 @@ if (target.startsWith('win32')) {
   process.exit(result.status ?? 1)
 }
 
-if (target.startsWith('darwin')) {
-  const { buildDarwin } = (await import('./build-helper-darwin.mjs')) as {
-    buildDarwin: (options: BuildOptions) => Promise<void>
-  }
-  await buildDarwin(shared)
-  process.exit(0)
-}
-
-if (target.startsWith('linux')) {
-  const { buildLinux } = (await import('./build-helper-linux.mjs')) as {
-    buildLinux: (options: BuildOptions) => Promise<void>
-  }
-  await buildLinux(shared)
-  process.exit(0)
+if (target.startsWith('darwin') || target.startsWith('linux')) {
+  console.error(
+    `${target} 打包脚本仍在沿用已退役的 Node 目录结构（launcher.sh / fetch-node.sh / node_modules 裁剪），尚未重写。`
+    + '请先运行 cargo build --release；Windows 打包不受影响。',
+  )
+  process.exit(3)
 }
 
 console.error(`未知构建目标：${target}`)

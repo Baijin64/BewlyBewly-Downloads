@@ -9,45 +9,28 @@ permissions:
 jobs:
   extension:
     uses: ./.github/workflows/ci.yml
+
   connector:
     name: Windows connector
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-      - name: Install native dependencies
-        run: npm ci --prefix native --ignore-scripts
-      - name: Fetch pinned private test toolchain
+      - name: Rust tests
+        run: cargo test --workspace --manifest-path rust/Cargo.toml
+      - name: Stage helper
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $manifest = Get-Content native/toolchain.json -Raw | ConvertFrom-Json
-          for ($attempt = 1; $attempt -le 3; $attempt++) {
-            gh release download $manifest.releaseTag --repo $env:GITHUB_REPOSITORY --pattern $manifest.asset --dir dist/toolchain-download
-            if ($LASTEXITCODE -eq 0) { break }
-            Write-Host "toolchain download attempt $attempt failed; retrying"
-            Start-Sleep -Seconds 5
-          }
-          if ($LASTEXITCODE -ne 0) { throw 'Media toolchain download failed' }
-          Expand-Archive -LiteralPath (Join-Path dist/toolchain-download $manifest.asset) -DestinationPath dist/toolchain
-          node scripts/verify-toolchain.mjs --platform win32-x64 dist/toolchain/bin
-          if ($LASTEXITCODE -ne 0) { throw 'Media toolchain hashes did not match' }
-      - name: Compile native helper
-        shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -BinDirectory dist/toolchain/bin -StageOnly
-      - name: Test native helper
-        run: node --test native/tests/*.test.mjs
-      - name: Build unsigned MSIX
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -StageOnly
+      - name: Build MSIX
         shell: pwsh
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -BinDirectory dist/toolchain/bin
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1
           if ($LASTEXITCODE -ne 0) { throw 'MSIX build failed' }
-          $version = (Get-Content native/package.json -Raw | ConvertFrom-Json).version
-          Move-Item -LiteralPath "dist/Bewly-DownloadHelper-$version-x64.msix" -Destination "dist/Bewly-DownloadHelper-$version-x64-unsigned.msix"
+          $msix = Get-ChildItem -LiteralPath dist -Filter 'Bewly-DownloadHelper-*-x64.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'MSIX output not found' }
+          $unsigned = $msix.FullName -replace '\.msix$', '-unsigned.msix'
+          Move-Item -LiteralPath $msix.FullName -Destination $unsigned
+          Write-Output "Unsigned MSIX: $unsigned"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-connector-unsigned
@@ -56,49 +39,35 @@ jobs:
           retention-days: 14
 
   connector-posix:
-    name: ${{ matrix.target }} connector
+    name: ${{ matrix.target }} build and test
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: linux-x64
             os: ubuntu-24.04
-            stage: helper-linux-x64
           - target: darwin-arm64
             os: macos-14
-            stage: helper-darwin-arm64
           - target: darwin-x64
             os: macos-13
-            stage: helper-darwin-x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-      - name: Install native dependencies
-        run: npm ci --prefix native --ignore-scripts
-      - name: Build pinned media tools from source
-        run: sh scripts/toolchain/build-posix-tools.sh ${{ matrix.target }} dist/toolchain/bin
-      - name: Verify media tools
-        run: node scripts/verify-toolchain.mjs --platform ${{ matrix.target }} dist/toolchain/bin
-      - name: Build helper
-        run: npx esno scripts/build-helper.ts --target ${{ matrix.target }} --bin dist/toolchain/bin
-      - name: Test native helper
-        env:
-          BEWLY_NATIVE_TEST_ROOT: dist/${{ matrix.stage }}
-        run: node --test native/tests/*.test.mjs
-      - name: Inspect macOS signature
-        if: startsWith(matrix.target, 'darwin')
+      - name: Rust tests
+        run: cargo test --workspace --manifest-path rust/Cargo.toml
+      # macOS/Linux packaging still lives in the retired Node helper scripts (they
+      # stage launcher.sh/fetch-node.sh and the aria2/FFmpeg payloads), so this job
+      # validates the Rust build only until those packagers are rewritten.
+      - name: Build host binary
         run: |
-          codesign --verify --strict --verbose=2 "dist/${{ matrix.stage }}-package/BewlyDownload.app"
-          plutil -lint "dist/${{ matrix.stage }}-package/BewlyDownload.app/Contents/Info.plist"
+          cargo build --release --manifest-path rust/Cargo.toml
+          mkdir -p dist
+          cp rust/target/release/bewly-host "dist/bewly-host-${{ matrix.target }}"
+          chmod +x "dist/bewly-host-${{ matrix.target }}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ matrix.target }}-connector
-          path: |
-            dist/*-linux-*.tar.gz
-            dist/*-macos-*.zip
+          name: ${{ matrix.target }}-host
+          path: dist/bewly-host-${{ matrix.target }}
           if-no-files-found: error
           retention-days: 14

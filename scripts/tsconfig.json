@@ -18,8 +18,7 @@
     "pack-crx.ts",
     "pack-chrome-zip.ts",
     "update-extension-files.ts",
-    "verify-download-live.ts",
-    "legacy-modules.d.ts"
+    "verify-download-live.ts"
   ],
   "exclude": [
     "./research"

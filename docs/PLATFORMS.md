@@ -49,21 +49,15 @@ sh install.sh --systemd                      # 可选：systemd --user 常驻
 ## 构建
 
 ```sh
-npx esno scripts/build-helper.ts --target win32-x64     # 转调 build-helper.ps1（需 Windows SDK）
-npx esno scripts/build-helper.ts --target linux-x64     # 需 --bin 指定 aria2c/ffmpeg
-npx esno scripts/build-helper.ts --target darwin-arm64  # 必须在 macOS 上运行（swiftc/codesign）
+npx esno scripts/build-helper.ts --target win32-x64     # 转调 build-helper.ps1（需 Windows SDK 与 .NET SDK）
+npx esno scripts/build-helper.ts --target linux-x64     # 打包脚本待重写，目前仅验证 cargo build
+npx esno scripts/build-helper.ts --target darwin-arm64  # 必须在 macOS 上运行（swiftc/codesign），同上
 ```
 
 暂存目录已存在时构建会拒绝覆盖，需显式加 `--clean` 或使用 `--out <dir>`。
 
-媒体工具（aria2 / FFmpeg）由 `scripts/toolchain/build-posix-tools.sh` 从官方源码构建：
+媒体传输与合流已由 Rust 实现，不再依赖 aria2 或 FFmpeg 可执行文件；macOS/Linux 的打包脚本仍在沿用已退役的 Node 目录结构（`launcher.sh`、`fetch-node.sh`、`node_modules` 裁剪），重写前不能产出可安装包。
 
-```sh
-sh scripts/toolchain/build-posix-tools.sh linux-x64 dist/toolchain/bin
-node scripts/verify-toolchain.mjs --platform linux-x64 dist/toolchain/bin
-```
-
-二进制与 `SOURCES.txt`（版本 + configure 参数）必须同批发布，以满足 GPL/LGPL 的源码提供义务。
 
 ## 已知限制
 

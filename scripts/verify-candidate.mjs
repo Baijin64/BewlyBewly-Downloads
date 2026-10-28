@@ -11,7 +11,7 @@ const Pbf = crxRequire('pbf')
 const proto = crxRequire('./crx3.js.pb')
 const identity = JSON.parse(await readFile('platforms/identity.json', 'utf8'))
 const expectedVersion = JSON.parse(await readFile('package.json', 'utf8')).version
-const expectedHelperVersion = JSON.parse(await readFile('native/package.json', 'utf8')).version
+const expectedHelperVersion = /\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/.exec(await readFile('rust/Cargo.toml', 'utf8'))[1]
 const name = 'BewlyBewly-Downloads-' + expectedVersion + '-candidate'
 const crx = await readFile(path.join('dist', name + '.crx'))
 assert.equal(crx.subarray(0, 4).toString(), 'Cr24')
