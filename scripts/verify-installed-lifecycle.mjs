@@ -12,7 +12,7 @@ const data = await mkdtemp(path.join(tmpdir(), 'bewly-installed-lifecycle-'))
 const env = { ...process.env, BEWLY_DOWNLOAD_DATA: data }
 const extensionVersion = JSON.parse(readFileSync('package.json')).version
 delete env.BEWLY_DOWNLOAD_HEADLESS
-const origin = 'chrome-extension://' + JSON.parse(readFileSync('native/identity.json')).extensionId + '/'
+const origin = 'chrome-extension://' + JSON.parse(readFileSync('platforms/identity.json')).extensionId + '/'
 const frame = value => { const body = Buffer.from(JSON.stringify(value)), size = Buffer.alloc(4); size.writeUInt32LE(body.length); return Buffer.concat([size, body]) }
 const descriptor = () => JSON.parse(readFileSync(path.join(data, 'connection.json')))
 const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }

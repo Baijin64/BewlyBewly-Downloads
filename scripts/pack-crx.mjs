@@ -17,7 +17,7 @@ const publicKey = certificate.publicKey.export({ type: 'spki', format: 'der' })
 const hash = createHash('sha256').update(publicKey).digest()
 const extensionId = hash.subarray(0, 16).toString('hex').replace(/[0-9a-f]/g, c => String.fromCharCode(97 + Number.parseInt(c, 16)))
 const thumbprint = certificate.fingerprint.replaceAll(':', '')
-const identityPath = path.join(root, 'native/identity.json')
+const identityPath = path.join(root, 'platforms/identity.json')
 const identity = JSON.parse(readFileSync(identityPath, 'utf8'))
 
 if (process.argv.includes('--prepare')) {

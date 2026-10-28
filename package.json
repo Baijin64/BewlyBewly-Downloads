@@ -8,7 +8,7 @@
   "description": "Just make a few small changes to your Bilibili homepage.",
   "homepage": "https://github.com/Baijin64/BewlyBewly-Downloads",
   "scripts": {
-    "test:download": "node --test native/tests/*.test.mjs",
+    "test:download": "cargo test --manifest-path rust/Cargo.toml",
     "build:helper": "node scripts/build-helper.mjs",
     "build:helper:windows": "node scripts/build-helper.mjs --target win32-x64",
     "build:helper:linux": "node scripts/build-helper.mjs --target linux-x64",

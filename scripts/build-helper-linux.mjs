@@ -85,11 +85,11 @@ export async function buildLinux({ repoRoot, target, bin, stageOnly, out, clean 
   mkdirSync(delivery, { recursive: true })
   cpSync(stage, path.join(delivery, 'app'), { recursive: true })
   for (const file of ['install.sh', 'uninstall.sh']) {
-    copyFileSync(path.join(repoRoot, 'native', 'linux', file), path.join(delivery, file))
+    copyFileSync(path.join(repoRoot, 'platforms', 'linux', file), path.join(delivery, file))
     chmodSync(path.join(delivery, file), 0o755)
   }
   mkdirSync(path.join(delivery, 'linux'), { recursive: true })
-  copyFileSync(path.join(repoRoot, 'native', 'linux', 'bewly-download.service'), path.join(delivery, 'linux', 'bewly-download.service'))
+  copyFileSync(path.join(repoRoot, 'platforms', 'linux', 'bewly-download.service'), path.join(delivery, 'linux', 'bewly-download.service'))
   writeFileSync(path.join(delivery, 'README.txt'), [
     'Bewly 下载助手（Linux）',
     '',

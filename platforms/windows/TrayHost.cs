@@ -31,6 +31,30 @@ public sealed class TrayHost : ApplicationContext
     string clipboardHash = "";
     Form countdown;
     Label countdownLabel;
+    [STAThread]
+    public static int Main(string[] args)
+    {
+        string data = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--tray")
+            {
+                if (i + 1 < args.Length) data = args[i + 1];
+                break;
+            }
+            if (!args[i].StartsWith("-"))
+            {
+                data = args[i];
+                break;
+            }
+        }
+        if (string.IsNullOrEmpty(data))
+        {
+            data = Environment.GetEnvironmentVariable("BEWLY_DOWNLOAD_DATA")
+                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BewlyDownload");
+        }
+        return Run(data);
+    }
     public static int Run(string data)
     {
         string hash;
@@ -47,7 +71,18 @@ public sealed class TrayHost : ApplicationContext
     TrayHost(string directory)
     {
         data = directory;
-        ownedIcon = new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "BewlyDownload.ico"), SystemInformation.SmallIconSize);
+        string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "BewlyDownload.ico");
+        if (File.Exists(iconPath))
+        {
+            ownedIcon = new Icon(iconPath, SystemInformation.SmallIconSize);
+        }
+        else
+        {
+            using (var bmp = TrayArtwork.Bitmap(SystemInformation.SmallIconSize.Width))
+            {
+                ownedIcon = Icon.FromHandle(bmp.GetHicon());
+            }
+        }
         icon = new NotifyIcon { Icon = ownedIcon, Text = "Bewly 下载助手", Visible = true };
         menu = new TrayMenu(MenuCommand);
         status = menu.Status; startItem = menu.StartItem; pauseItem = menu.PauseItem; cancelItem = menu.CancelItem;

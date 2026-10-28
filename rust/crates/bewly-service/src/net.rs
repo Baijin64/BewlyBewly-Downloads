@@ -20,6 +20,59 @@ fn base() -> String {
     std::env::var("BEWLY_API_BASE").unwrap_or_else(|_| "https://api.bilibili.com".to_string())
 }
 
+fn member_base() -> String {
+    std::env::var("BEWLY_MEMBER_API_BASE")
+        .unwrap_or_else(|_| "https://member.bilibili.com".to_string())
+}
+
+pub fn fetch_join_time(cookie: &str) -> Result<i64, String> {
+    let endpoint = format!(
+        "{}/x2/creative/h5/calendar/event?ts=0",
+        member_base().trim_end_matches('/')
+    );
+    let mut request = agent()
+        .get(&endpoint)
+        .set("User-Agent", USER_AGENT)
+        .set("Referer", "https://www.bilibili.com/");
+    if !cookie.is_empty() {
+        request = request.set("Cookie", cookie);
+    }
+    let response = request
+        .call()
+        .map_err(|error| format!("B 站接口请求失败（{error}）"))?;
+    if response.status() != 200 {
+        return Err(format!("B 站接口请求失败（HTTP {}）", response.status()));
+    }
+    let body: Value = response
+        .into_json()
+        .map_err(|error| format!("B 站接口返回了无效内容：{error}"))?;
+    let code = body.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    if code != 0 {
+        let message = body
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("请求未成功");
+        return Err(format!("B 站返回 {code}：{message}"));
+    }
+    let parse_jointime = |val: &Value| -> Option<i64> {
+        if let Some(n) = val.as_i64() {
+            return Some(n);
+        }
+        if let Some(s) = val.as_str() {
+            return s.parse::<i64>().ok();
+        }
+        None
+    };
+    let jointime = body
+        .pointer("/data/pfs/profile/jointime")
+        .or_else(|| body.pointer("/pfs/profile/jointime"))
+        .and_then(parse_jointime);
+    match jointime {
+        Some(time) if time > 0 => Ok(time),
+        _ => Err("官方接口当前未提供该账号的入站时间，请确认已登录".into()),
+    }
+}
+
 pub fn expand(value: &str) -> Result<String, String> {
     if !is_short_link(value) {
         video_id(value)?;
@@ -555,5 +608,83 @@ mod tests {
         assert_eq!(subtitles.len(), 1);
         assert_eq!(subtitles[0].language, "zh-CN");
         assert!(subtitles[0].content.contains("第一句字幕"));
+    }
+
+    #[test]
+    fn fetch_join_time_parses_json_and_handles_errors() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let responses = vec![
+            json!({
+                "code": 0,
+                "message": "0",
+                "data": {
+                    "pfs": {
+                        "profile": {
+                            "jointime": 1580000000
+                        }
+                    }
+                }
+            }),
+            json!({
+                "code": 0,
+                "pfs": {
+                    "profile": {
+                        "jointime": 1600000000
+                    }
+                }
+            }),
+            json!({
+                "code": 0,
+                "data": {
+                    "pfs": {
+                        "profile": {
+                            "jointime": 0
+                        }
+                    }
+                }
+            }),
+            json!({
+                "code": -101,
+                "message": "账号未登录"
+            }),
+        ];
+
+        std::thread::spawn(move || {
+            for item in responses {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let body = item.to_string();
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            }
+        });
+
+        std::env::set_var("BEWLY_MEMBER_API_BASE", format!("http://127.0.0.1:{port}"));
+
+        let res1 = fetch_join_time("SESSDATA=test").unwrap();
+        assert_eq!(res1, 1580000000);
+
+        let res2 = fetch_join_time("").unwrap();
+        assert_eq!(res2, 1600000000);
+
+        let err3 = fetch_join_time("").unwrap_err();
+        assert_eq!(
+            err3,
+            "官方接口当前未提供该账号的入站时间，请确认已登录"
+        );
+
+        let err4 = fetch_join_time("").unwrap_err();
+        assert_eq!(err4, "B 站返回 -101：账号未登录");
+
+        std::env::remove_var("BEWLY_MEMBER_API_BASE");
     }
 }

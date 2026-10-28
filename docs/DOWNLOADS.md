@@ -97,7 +97,7 @@ npx run-s build:web build:prepare build:js build:bg
 npm run build:helper -- -StageOnly
 ```
 
-发布构建可设置独立的 `BEWLY_BUILD_DIR`，使用上述顺序构建、`build:helper -- -DevSign`、`pack:crx -- --source <构建目录>` 流程。需要 Node.js 24+、Windows SDK 和 .NET Framework C# 编译器；最终 MSIX 自带媒体工具，复用系统 Node.js。固定公开身份位于 `native/identity.json`，签名使用 Windows 证书提供器，不导出私钥，不自动更改证书信任。
+发布构建可设置独立的 `BEWLY_BUILD_DIR`，使用上述顺序构建、`build:helper -- -DevSign`、`pack:crx -- --source <构建目录>` 流程。需要 Node.js 24+、Windows SDK 和 .NET Framework C# 编译器；最终 MSIX 自带媒体工具，复用系统 Node.js。固定公开身份位于 `platforms/identity.json`，签名使用 Windows 证书提供器，不导出私钥，不自动更改证书信任。
 
 界面预览使用 `npx vite --config native/tests/preview/vite.config.ts`，为模拟任务，不访问真实账号。显式真实网络验证使用 `node scripts/verify-download-live.mjs <BV号>`，在独立目录工作，完成后关闭自建服务并移除临时会话副本。
 

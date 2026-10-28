@@ -22,6 +22,168 @@ use crate::settings::{apply, Settings};
 use crate::tasks;
 use crate::tools;
 
+const SESSION_KEY: &[u8] = b"bewly-download-session-v2";
+
+fn obfuscate_session(cookie: &str) -> Vec<u8> {
+    cookie
+        .as_bytes()
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| b ^ SESSION_KEY[i % SESSION_KEY.len()])
+        .collect()
+}
+
+fn deobfuscate_session(bytes: &[u8]) -> Option<String> {
+    let deobfuscated: Vec<u8> = bytes
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| b ^ SESSION_KEY[i % SESSION_KEY.len()])
+        .collect();
+    String::from_utf8(deobfuscated).ok()
+}
+
+fn save_session(data_directory: &Path, cookie: &str) {
+    let path = data_directory.join("session.dat");
+    if cookie.is_empty() {
+        let _ = std::fs::remove_file(path);
+    } else {
+        let data = obfuscate_session(cookie);
+        if std::fs::write(&path, &data).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+}
+
+fn load_session(data_directory: &Path) -> String {
+    let path = data_directory.join("session.dat");
+    if let Ok(data) = std::fs::read(&path) {
+        if let Some(cookie) = deobfuscate_session(&data) {
+            if cookie.len() <= 32768 && !cookie.contains(['\r', '\n']) {
+                return cookie;
+            }
+        }
+    }
+    String::new()
+}
+
+#[cfg(windows)]
+fn is_pid_alive(pid: u32) -> bool {
+    extern "system" {
+        fn OpenProcess(
+            dwDesiredAccess: u32,
+            bInheritHandle: i32,
+            dwProcessId: u32,
+        ) -> *mut std::ffi::c_void;
+        fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
+        fn GetExitCodeProcess(hProcess: *mut std::ffi::c_void, lpExitCode: *mut u32) -> i32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code: u32 = 0;
+        let success = GetExitCodeProcess(handle, &mut exit_code);
+        CloseHandle(handle);
+        success != 0 && exit_code == STILL_ACTIVE
+    }
+}
+
+#[cfg(unix)]
+fn is_pid_alive(pid: u32) -> bool {
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    unsafe { kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn is_pid_alive(_pid: u32) -> bool {
+    false
+}
+
+fn acquire_service_lock(data_directory: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(data_directory).map_err(|error| error.to_string())?;
+    let lock_path = data_directory.join("service.lock");
+    if lock_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&lock_path) {
+            if let Ok(pid) = content.trim().parse::<u32>() {
+                if is_pid_alive(pid) && pid != std::process::id() {
+                    return Err(format!("另一个下载服务实例正在运行 (PID: {pid})"));
+                }
+            }
+        }
+    }
+    std::fs::write(&lock_path, std::process::id().to_string())
+        .map_err(|error| format!("无法写入服务锁文件: {error}"))?;
+    Ok(())
+}
+
+fn open_system_target(action: &str, target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let target_str = target.to_string_lossy();
+        let mut cmd = if action == "reveal" {
+            let mut c = std::process::Command::new("explorer.exe");
+            c.arg(format!("/select,\"{target_str}\""));
+            c
+        } else {
+            let mut c = std::process::Command::new("cmd.exe");
+            c.args(["/c", "start", "", &target_str]);
+            c
+        };
+        cmd.spawn().map_err(|error| format!("无法打开目标: {error}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if action == "reveal" {
+            cmd.arg("-R");
+        }
+        cmd.arg(target);
+        cmd.spawn().map_err(|error| format!("无法打开目标: {error}"))?;
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let target_to_open = if action == "reveal" {
+            target.parent().unwrap_or(target)
+        } else {
+            target
+        };
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(target_to_open);
+        cmd.spawn().map_err(|error| format!("无法打开目标: {error}"))?;
+    }
+    Ok(())
+}
+
+fn trigger_system_shutdown() {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("shutdown.exe")
+            .args(["/s", "/t", "0"])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("osascript")
+            .args(["-e", "tell application \"System Events\" to shut down"])
+            .spawn();
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("systemctl")
+            .arg("poweroff")
+            .spawn();
+    }
+}
+
 pub struct ServiceState {
     pub data_directory: PathBuf,
     pub store: std::sync::Mutex<Store>,
@@ -37,6 +199,7 @@ pub struct ServiceState {
     pub tray: std::sync::Mutex<Option<std::process::Child>>,
     pub running: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
     pub cookie: std::sync::Mutex<String>,
+    pub policy: std::sync::Mutex<crate::lifetime::CompletionPolicy>,
 }
 
 impl ServiceState {
@@ -47,6 +210,7 @@ impl ServiceState {
             Some(value) => merge_settings(&Settings::default(), &value),
             None => Settings::default(),
         };
+        let initial_cookie = load_session(data_directory);
         Ok(Self {
             data_directory: data_directory.to_path_buf(),
             store: std::sync::Mutex::new(store),
@@ -61,7 +225,8 @@ impl ServiceState {
             active_requests: AtomicUsize::new(0),
             tray: std::sync::Mutex::new(None),
             running: std::sync::Mutex::new(std::collections::HashMap::new()),
-            cookie: std::sync::Mutex::new(String::new()),
+            cookie: std::sync::Mutex::new(initial_cookie),
+            policy: std::sync::Mutex::new(crate::lifetime::CompletionPolicy::new()),
         })
     }
 
@@ -109,7 +274,8 @@ impl ServiceState {
                     task.get("status").and_then(Value::as_str).unwrap_or(""),
                     "queued" | "resolving" | "downloading" | "paused" | "muxing" | "postprocessing"
                 )
-            });
+            })
+            || self.policy.lock().map(|p| p.due > 0).unwrap_or(false);
         let idle_minutes = self.settings().idle_exit_minutes;
         let runtime = self.lifetime.lock().snapshot(busy, idle_minutes);
         let mut value = serde_json::Map::new();
@@ -223,14 +389,25 @@ fn task_view(params: &Value, directory: &str) -> Result<TaskView, String> {
 
 pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Value, String> {
     match method {
+        "ping" => Ok(json!({ "pong": true })),
         "health" => Ok(state.health_value()),
-        "configure" => {
+        "configure" | "saveSettings" => {
             let current = state.settings();
             let next = apply(&current, params)?;
             state.persist_settings(&next)?;
             *state.settings.write().expect("settings lock") = next.clone();
             state.save_snapshot();
             Ok(serde_json::to_value(next).map_err(|error| error.to_string())?)
+        }
+        "setSession" => {
+            if let Some(s) = params.get("session").and_then(Value::as_str) {
+                *state
+                    .cookie
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = s.to_string();
+                save_session(&state.data_directory, s);
+            }
+            Ok(json!({ "saved": true }))
         }
         "listTasks" => Ok(Value::Array(
             state
@@ -258,10 +435,37 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
         "stageTasks" | "createTasks" => {
             let start = method == "createTasks";
             let settings = state.settings();
+            let mut effective_params = params.clone();
+            if effective_params.get("info").is_none() {
+                if let Some(video) = effective_params.get("video").and_then(Value::as_str) {
+                    let cookie = state
+                        .cookie
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .clone();
+                    let info = crate::net::inspect(video, &cookie)?;
+                    if let Some(obj) = effective_params.as_object_mut() {
+                        obj.insert("info".into(), info);
+                    }
+                }
+            }
             let jobs = {
                 let store = state.store();
-                tasks::enqueue(&store, &settings, params, start)?
+                tasks::enqueue(&store, &settings, &effective_params, start)?
             };
+            if start {
+                let all_tasks = state.tasks();
+                let mut policy = state
+                    .policy
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                policy.begin(&all_tasks);
+                for job in &jobs {
+                    if let Some(id) = job.get("id").and_then(Value::as_str) {
+                        policy.started(id);
+                    }
+                }
+            }
             state.save_snapshot();
             Ok(Value::Array(jobs.iter().map(tasks::public_task).collect()))
         }
@@ -284,6 +488,122 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
                 "basename": basename,
             }))
         }
+        "taskFile" => {
+            let action = params.get("action").and_then(Value::as_str).unwrap_or("");
+            if !matches!(action, "play" | "reveal" | "folder") {
+                return Err("无效文件操作".into());
+            }
+            let id = params.get("id").and_then(Value::as_str).unwrap_or("");
+            let task = if !id.is_empty() {
+                state.store().task(id).map_err(|error| error.to_string())?
+            } else {
+                None
+            };
+            if task.is_none() && action != "folder" {
+                return Err("任务不存在".into());
+            }
+            let file: Option<String> = task.as_ref().and_then(|t| {
+                if let Some(output) = t.get("output").and_then(Value::as_str) {
+                    if !output.is_empty() {
+                        return Some(output.to_string());
+                    }
+                }
+                if let Some(artifacts) = t.get("artifacts").and_then(Value::as_object) {
+                    for val in artifacts.values() {
+                        if let Some(path_str) = val.as_str() {
+                            if !path_str.is_empty() {
+                                return Some(path_str.to_string());
+                            }
+                        }
+                    }
+                }
+                None
+            });
+            let legacy_path = task
+                .as_ref()
+                .and_then(|t| t.get("legacyPath").and_then(Value::as_str))
+                .filter(|s| !s.is_empty());
+            if task.is_some() && file.is_none() && !(action == "folder" && legacy_path.is_some()) {
+                return Err("任务没有输出文件".into());
+            }
+            let target: PathBuf = if action == "folder" {
+                if let Some(lp) = legacy_path {
+                    PathBuf::from(lp)
+                } else if let Some(ref f) = file {
+                    Path::new(f)
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| PathBuf::from(state.settings().directory))
+                } else {
+                    PathBuf::from(state.settings().directory)
+                }
+            } else {
+                PathBuf::from(file.as_ref().unwrap())
+            };
+
+            if action == "folder" {
+                if !target.is_dir() {
+                    return Err("目录不存在".into());
+                }
+            } else {
+                if !target.is_file() {
+                    return Err("文件不存在".into());
+                }
+                if action == "play" {
+                    let ext = target
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| format!(".{}", e.to_ascii_lowercase()))
+                        .unwrap_or_default();
+                    const PLAYABLE_EXTS: &[&str] = &[
+                        ".mp4", ".mkv", ".m4a", ".mp3", ".flac", ".mka", ".aac", ".wav", ".eac3",
+                    ];
+                    if !PLAYABLE_EXTS.contains(&ext.as_str()) {
+                        return Err("此文件不能作为媒体播放".into());
+                    }
+                }
+            }
+
+            if std::env::var("BEWLY_DOWNLOAD_HEADLESS").ok().as_deref() != Some("1") {
+                open_system_target(action, &target)?;
+            }
+            Ok(json!({ "opened": true }))
+        }
+        "clipboardVideo" => {
+            let settings = state.settings();
+            if !settings.listen_clipboard {
+                return Err("剪贴板监听未启用".into());
+            }
+            let video = params
+                .get("video")
+                .and_then(Value::as_str)
+                .ok_or("缺少视频链接")?;
+            let cookie = state
+                .cookie
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            let info = crate::net::inspect(video, &cookie)?;
+            let first_cid = info
+                .get("pages")
+                .and_then(Value::as_array)
+                .and_then(|pages| pages.first())
+                .and_then(|p| p.get("cid"))
+                .cloned()
+                .ok_or("视频没有有效分 P")?;
+            let default_opts =
+                serde_json::to_value(&settings.default_options).unwrap_or_else(|_| json!({}));
+            let enqueue_params = json!({
+                "info": info,
+                "cids": [first_cid],
+                "options": default_opts,
+            });
+            let store = state.store();
+            let jobs = tasks::enqueue(&store, &settings, &enqueue_params, false)?;
+            drop(store);
+            state.save_snapshot();
+            Ok(Value::Array(jobs.iter().map(tasks::public_task).collect()))
+        }
         "desktopState" => {
             state.last_tray.store(
                 time::OffsetDateTime::now_utc().unix_timestamp() * 1000,
@@ -292,16 +612,23 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
             let tasks = state.tasks();
             let counts = tasks::counts(&tasks);
             let settings = state.settings();
+            let (completed, shutdown_due) = {
+                let policy = state
+                    .policy
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                (policy.completed, policy.due)
+            };
             Ok(json!({
                 "exiting": state.closing.load(Ordering::Relaxed),
                 "mode": state.mode,
                 "pending": counts.pending,
                 "active": counts.active,
-                "completed": counts.completed,
+                "completed": completed,
                 "tray": settings.tray,
                 "soundTip": settings.sound_tip,
                 "listenClipboard": settings.listen_clipboard,
-                "shutdownDue": 0,
+                "shutdownDue": shutdown_due,
             }))
         }
         "expandLink" => {
@@ -473,6 +800,7 @@ pub fn dispatch(state: &ServiceState, method: &str, params: &Value) -> Result<Va
 }
 
 const READ_ONLY_METHODS: [&str; 4] = ["health", "queryTasks", "listTasks", "desktopState"];
+const ACTIVE_STATES: [&str; 4] = ["resolving", "downloading", "muxing", "postprocessing"];
 
 fn status_of(task: &Value) -> &str {
     task.get("status").and_then(Value::as_str).unwrap_or("")
@@ -502,18 +830,36 @@ fn task_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
     let status = status_of(&task).to_string();
     match action {
         "remove" => {
-            if tasks::ACTIVE_STATES.contains(&status.as_str()) || status == "queued" {
+            for _ in 0..50 {
+                let is_running = state
+                    .running
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .contains_key(id);
+                if !is_running {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let task = state
+                .store()
+                .task(id)
+                .map_err(|error| error.to_string())?
+                .ok_or("任务不存在")?;
+            let status = status_of(&task).to_string();
+            if ACTIVE_STATES.contains(&status.as_str()) || status == "queued" {
                 return Err("请先暂停任务再移除".into());
             }
             state
                 .store()
                 .remove_task(id)
                 .map_err(|error| error.to_string())?;
+            let _ = std::fs::remove_dir_all(state.data_directory.join("partial").join(id));
             state.save_snapshot();
             Ok(json!({ "id": id, "removed": true }))
         }
         "deleteFiles" => {
-            if tasks::ACTIVE_STATES.contains(&status.as_str()) || status == "queued" {
+            if ACTIVE_STATES.contains(&status.as_str()) || status == "queued" {
                 return Err("请先暂停任务再移除".into());
             }
             let legacy = task.get("legacyPath").and_then(Value::as_str).unwrap_or("");
@@ -560,7 +906,16 @@ fn task_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
                 return Err("任务不在待下载列表".into());
             }
             task["error"] = Value::String(String::new());
-            set_status(state, &mut task, "queued")
+            let result = set_status(state, &mut task, "queued")?;
+            {
+                let mut policy = state
+                    .policy
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                policy.begin(&state.tasks());
+                policy.started(id);
+            }
+            Ok(result)
         }
         "pause" | "cancel" => {
             if matches!(status.as_str(), "completed" | "cancelled") {
@@ -568,6 +923,14 @@ fn task_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
             }
             if matches!(status.as_str(), "muxing" | "postprocessing") {
                 return Err("正在合并或保存附件，请等待当前步骤结束".into());
+            }
+            if let Some(flag) = state
+                .running
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .get(id)
+            {
+                flag.store(true, Ordering::Relaxed);
             }
             task["speed"] = json!(0);
             set_status(
@@ -584,15 +947,46 @@ fn task_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
             if !matches!(status.as_str(), "paused" | "failed" | "cancelled") {
                 return Err("任务当前不能恢复".into());
             }
+            if let Some(prepared) = params.get("prepared") {
+                if !prepared.is_null() {
+                    let validated = tasks::validate_prepared(prepared)?;
+                    task["prepared"] = validated;
+                }
+            }
             task["error"] = Value::String(String::new());
-            set_status(state, &mut task, "queued")
+            let result = set_status(state, &mut task, "queued")?;
+            {
+                let mut policy = state
+                    .policy
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                policy.begin(&state.tasks());
+                policy.started(id);
+            }
+            Ok(result)
+        }
+        "edit" => {
+            let default_opts = json!({});
+            let options_val = params.get("options").unwrap_or(&default_opts);
+            let public = tasks::edit_task(&mut task, options_val)?;
+            state
+                .store()
+                .put_task(&task)
+                .map_err(|error| error.to_string())?;
+            state.save_snapshot();
+            Ok(public)
         }
         _ => Err("无效任务操作".into()),
     }
 }
 
 fn batch_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
-    let action = params.get("action").and_then(Value::as_str).unwrap_or("");
+    let raw_action = params.get("action").and_then(Value::as_str).unwrap_or("");
+    let (action, all_override) = if raw_action == "clearCompleted" {
+        ("remove", Some("completed"))
+    } else {
+        (raw_action, None)
+    };
     if !matches!(
         action,
         "start" | "pause" | "resume" | "retry" | "remove" | "edit"
@@ -606,8 +1000,8 @@ fn batch_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
             .collect(),
         None => Vec::new(),
     };
-    if params.get("all").is_some() {
-        let range = params.get("all").and_then(Value::as_str).unwrap_or("");
+    let all_spec = all_override.or_else(|| params.get("all").and_then(Value::as_str));
+    if let Some(range) = all_spec {
         let statuses: &[&str] = match range {
             "pending" => &["pending"],
             "active" => &["queued", "resolving", "downloading", "paused"],
@@ -624,7 +1018,13 @@ fn batch_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
         let mut processed = 0usize;
         let mut errors: Vec<Value> = Vec::new();
         for id in &ids {
-            match task_action(state, &json!({ "id": id, "action": action })) {
+            let mut sub_params = json!({ "id": id, "action": action });
+            if action == "edit" {
+                if let Some(options) = params.get("options") {
+                    sub_params["options"] = options.clone();
+                }
+            }
+            match task_action(state, &sub_params) {
                 Ok(_) => processed += 1,
                 Err(error) => errors.push(json!({ "id": id, "error": error })),
             }
@@ -641,7 +1041,13 @@ fn batch_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
     let mut results = Vec::new();
     let mut errors = Vec::new();
     for id in ids {
-        match task_action(state, &json!({ "id": id, "action": action })) {
+        let mut sub_params = json!({ "id": id, "action": action });
+        if action == "edit" {
+            if let Some(options) = params.get("options") {
+                sub_params["options"] = options.clone();
+            }
+        }
+        match task_action(state, &sub_params) {
             Ok(result) => results.push(result),
             Err(error) => errors.push(json!({ "id": id, "error": error })),
         }
@@ -650,50 +1056,14 @@ fn batch_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
 }
 
 fn tool_request(state: &ServiceState, params: &Value) -> Result<Value, String> {
-    let op = params.get("op").and_then(Value::as_str).unwrap_or("");
-    match op {
-        "convertId" => {
-            let input = params.get("input").and_then(Value::as_str).unwrap_or("");
-            let store = state.store();
-            tools::convert_job(&store, input)
-        }
-        "status" => {
-            let id = params
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or("工具任务不存在")?;
-            let store = state.store();
-            tools::load_job(&store, id)?.ok_or_else(|| "工具任务不存在".to_string())
-        }
-        "exportHistory" => {
-            let directory = params
-                .get("directory")
-                .and_then(Value::as_str)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(state.settings().directory));
-            let store = state.store();
-            let path = tools::export_history(&store, &directory)?;
-            Ok(json!({ "path": path.to_string_lossy() }))
-        }
-        "pick" => {
-            let kind = params
-                .get("kind")
-                .and_then(Value::as_str)
-                .unwrap_or("directory");
-            let dialog = rfd::FileDialog::new();
-            let chosen = if kind == "directory" {
-                dialog.pick_folder()
-            } else {
-                dialog.pick_file()
-            };
-            Ok(match chosen {
-                Some(path) => json!({ "path": path.to_string_lossy(), "cancelled": false }),
-                None => json!({ "path": Value::Null, "cancelled": true }),
-            })
-        }
-        "cancel" => Ok(json!({ "cancelled": true })),
-        _ => Err("此工具操作尚未迁移到 Rust 引擎".into()),
-    }
+    let default_directory = state.settings().directory;
+    let cookie = state
+        .cookie
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let store = state.store();
+    tools::execute_tool(&store, &default_directory, &cookie, params)
 }
 
 fn desktop_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
@@ -703,7 +1073,14 @@ fn desktop_action(state: &ServiceState, params: &Value) -> Result<Value, String>
             ensure_tray(state);
             Ok(json!({ "mode": "manual" }))
         }
-        "cancelShutdown" => Ok(json!({ "cancelled": true })),
+        "cancelShutdown" => {
+            state
+                .policy
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .cancel();
+            Ok(json!({ "cancelled": true }))
+        }
         "exit" => {
             state.closing.store(true, Ordering::Relaxed);
             Ok(json!({ "exiting": true }))
@@ -811,16 +1188,22 @@ async fn rpc(
         .into_response();
     }
     if let Some(session) = payload.get("session") {
-        match session.as_str() {
-            Some(text) if text.len() <= 32768 && !text.contains(['\r', '\n']) => {
-                *state
-                    .cookie
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = text.to_string();
-            }
-            _ => {
-                return axum::Json(json!({ "ok": false, "error": "无效登录信息" })).into_response()
-            }
+        let valid_cookie = if session.is_null() {
+            Some("")
+        } else {
+            session
+                .as_str()
+                .filter(|text| text.len() <= 32768 && !text.contains(['\r', '\n']))
+        };
+
+        if let Some(cookie) = valid_cookie {
+            *state
+                .cookie
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = cookie.to_string();
+            save_session(&state.data_directory, cookie);
+        } else {
+            return axum::Json(json!({ "ok": false, "error": "无效登录信息" })).into_response();
         }
     }
     let read_only = READ_ONLY_METHODS.contains(&method)
@@ -845,6 +1228,7 @@ async fn fallback() -> Response {
 }
 
 pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
+    acquire_service_lock(&data_directory)?;
     let state = Arc::new(ServiceState::open(&data_directory, &mode)?);
     let token = state.token.clone();
     state.save_snapshot();
@@ -855,6 +1239,27 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             ticker.tick().await;
+            let now = now_ms();
+            let tasks = housekeeping.tasks();
+            let shutdown_enabled = housekeeping.settings().shutdown;
+            let due = housekeeping
+                .policy
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .evaluate(&tasks, shutdown_enabled, now);
+
+            if due > 0
+                && now >= due
+                && std::env::var("BEWLY_DOWNLOAD_HEADLESS").ok().as_deref() != Some("1")
+            {
+                housekeeping
+                    .policy
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .cancel();
+                trigger_system_shutdown();
+            }
+
             let runtime = housekeeping.runtime();
             if let Some(exit_at) = runtime.get("exitAt").and_then(Value::as_i64) {
                 if now_ms() >= exit_at {
@@ -862,6 +1267,8 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
                     housekeeping.save_snapshot();
                     let _ =
                         std::fs::remove_file(housekeeping.data_directory.join("connection.json"));
+                    let _ =
+                        std::fs::remove_file(housekeeping.data_directory.join("service.lock"));
                     // Give the in-flight reply a moment to leave the socket.
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     std::process::exit(0);
@@ -869,6 +1276,20 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
             }
         }
     });
+
+    struct CleanupGuard {
+        data_directory: PathBuf,
+    }
+    impl Drop for CleanupGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(self.data_directory.join("connection.json"));
+            let _ = std::fs::remove_file(self.data_directory.join("service.lock"));
+        }
+    }
+    let _guard = CleanupGuard {
+        data_directory: state.data_directory.clone(),
+    };
+
     let app = Router::new()
         .route("/rpc", post(rpc))
         .fallback(fallback)
@@ -953,6 +1374,55 @@ mod tests {
         assert_eq!(
             dispatch(&state, "nope", &json!({})).unwrap_err(),
             "未知下载操作：nope"
+        );
+    }
+
+    #[test]
+    fn session_persistence_roundtrip() {
+        let (temp, _state) = state();
+        let cookie_val = "SESSDATA=test_cookie_12345; DedeUserID=98765";
+        save_session(&temp.0, cookie_val);
+        let loaded = load_session(&temp.0);
+        assert_eq!(loaded, cookie_val);
+
+        save_session(&temp.0, "");
+        assert_eq!(load_session(&temp.0), "");
+        assert!(!temp.0.join("session.dat").exists());
+    }
+
+    #[test]
+    fn desktop_state_and_action_cancel_shutdown() {
+        let (_temp, state) = state();
+        {
+            let mut policy = state.policy.lock().unwrap();
+            policy.due = 123456;
+            policy.completed = 5;
+        }
+        let ds = dispatch(&state, "desktopState", &json!({})).unwrap();
+        assert_eq!(ds["completed"], 5);
+        assert_eq!(ds["shutdownDue"], 123456);
+
+        let res = dispatch(&state, "desktopAction", &json!({ "action": "cancelShutdown" })).unwrap();
+        assert_eq!(res["cancelled"], true);
+        assert_eq!(state.policy.lock().unwrap().due, 0);
+    }
+
+    #[test]
+    fn service_lock_guard() {
+        let temp_dir = std::env::temp_dir().join(format!("bewly-lock-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        assert!(acquire_service_lock(&temp_dir).is_ok());
+        assert!(temp_dir.join("service.lock").exists());
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn task_action_edit_validation() {
+        let (_temp, state) = state();
+        // Missing task returns error
+        assert_eq!(
+            dispatch(&state, "taskAction", &json!({ "id": "none", "action": "edit" })).unwrap_err(),
+            "任务不存在"
         );
     }
 }

@@ -9,7 +9,7 @@ const JSZip = require('jszip')
 const crxRequire = createRequire(require.resolve('crx'))
 const Pbf = crxRequire('pbf')
 const proto = crxRequire('./crx3.js.pb')
-const identity = JSON.parse(await readFile('native/identity.json', 'utf8'))
+const identity = JSON.parse(await readFile('platforms/identity.json', 'utf8'))
 const expectedVersion = JSON.parse(await readFile('package.json', 'utf8')).version
 const expectedHelperVersion = JSON.parse(await readFile('native/package.json', 'utf8')).version
 const name = 'BewlyBewly-Downloads-' + expectedVersion + '-candidate'
@@ -48,7 +48,7 @@ const icon = await helper.file('Assets/BewlyDownload.ico').async('nodebuffer')
 assert.equal(icon.readUInt16LE(4), 9)
 assert.ok(names.some(value => value.includes('classic-level/prebuilds/win32-x64/')))
 const appxManifest = await helper.file('AppxManifest.xml').async('string')
-const packageIdentity = (await readFile('native/windows/AppxManifest.xml', 'utf8')).match(/<Identity[^>]+Version="([^"]+)"/)[1]
+const packageIdentity = (await readFile('platforms/windows/AppxManifest.xml', 'utf8')).match(/<Identity[^>]+Version="([^"]+)"/)[1]
 assert.ok(appxManifest.includes('Version="' + packageIdentity + '"'))
 async function evidence(name) {
   try { return JSON.parse(await readFile(path.join('dist', name), 'utf8')) }

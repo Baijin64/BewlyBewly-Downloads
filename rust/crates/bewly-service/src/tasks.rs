@@ -188,9 +188,61 @@ fn duplicate_of<'a>(
     })
 }
 
+fn normalize_and_validate_url(url_str: &str) -> Result<String, String> {
+    let normalized = if url_str.starts_with("//") {
+        format!("https:{url_str}")
+    } else {
+        url_str.to_string()
+    };
+    let mut parsed = url::Url::parse(&normalized)
+        .map_err(|_| "视频接口返回了不受支持的媒体地址".to_string())?;
+
+    let host = parsed.host_str().unwrap_or("").to_string();
+    if host.is_empty() {
+        return Err("视频接口返回了不受支持的媒体地址".to_string());
+    }
+
+    let is_local = host == "127.0.0.1" || host == "localhost";
+
+    if is_local {
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            return Err(format!("视频接口返回了不受支持的媒体地址（{host}）"));
+        }
+        return Ok(parsed.to_string());
+    }
+
+    if parsed.scheme() == "http" {
+        let _ = parsed.set_scheme("https");
+    } else if parsed.scheme() != "https" {
+        return Err(format!("视频接口返回了不受支持的媒体地址（{host}）"));
+    }
+
+    let host_lower = host.to_ascii_lowercase();
+    let allowed_suffixes = [
+        "bilivideo.com",
+        "bilivideo.cn",
+        "bilivideo.net",
+        "hdslb.com",
+        "bilibili.com",
+    ];
+
+    let matches_allowed = allowed_suffixes
+        .iter()
+        .any(|suffix| host_lower == *suffix || host_lower.ends_with(&format!(".{suffix}")));
+
+    let matches_akamaized =
+        host_lower.starts_with("upos-") && host_lower.ends_with(".akamaized.net");
+
+    if !matches_allowed && !matches_akamaized {
+        return Err(format!("视频接口返回了不受支持的媒体地址（{host}）"));
+    }
+
+    Ok(parsed.to_string())
+}
+
 /// Minimal `validatePrepared` port: keep the resolved stream URLs so the engine
 /// can download without another playurl round trip.
-fn validate_prepared(value: &Value) -> Result<Value, String> {
+pub fn validate_prepared(value: &Value) -> Result<Value, String> {
     if !value.is_object() {
         return Err("缺少视频解析结果".into());
     }
@@ -208,11 +260,8 @@ fn validate_prepared(value: &Value) -> Result<Value, String> {
         let mut clean = Vec::with_capacity(urls.len());
         for url in urls {
             let text = url.as_str().ok_or("无效媒体列表")?;
-            let lower = text.to_ascii_lowercase();
-            if !lower.starts_with("https://") {
-                return Err("视频接口返回了不受支持的媒体地址".into());
-            }
-            clean.push(Value::String(text.to_string()));
+            let clean_url = normalize_and_validate_url(text)?;
+            clean.push(Value::String(clean_url));
         }
         Ok(json!({
             "urls": clean,
@@ -223,35 +272,40 @@ fn validate_prepared(value: &Value) -> Result<Value, String> {
             "bandwidth": input.get("bandwidth").and_then(Value::as_f64).unwrap_or(0.0),
         }))
     };
-    let subtitle_tracks = value
-        .get("subtitleTracks")
-        .and_then(Value::as_array)
-        .map(|tracks| {
-            tracks
-                .iter()
-                .take(10)
-                .filter_map(|track| {
-                    let url = track.get("url").and_then(Value::as_str)?;
+    let subtitle_tracks = match value.get("subtitleTracks").and_then(Value::as_array) {
+        Some(tracks) => {
+            let mut validated_tracks = Vec::new();
+            for track in tracks.iter().take(10) {
+                if let Some(url) = track.get("url").and_then(Value::as_str) {
+                    let clean_url = normalize_and_validate_url(url)?;
                     let lang = track.get("language").and_then(Value::as_str).unwrap_or("");
                     let safe_lang = bewly_core::naming::safe_name(lang);
                     let mut truncated: String = safe_lang.chars().take(30).collect();
                     if truncated.is_empty() {
                         truncated = "default".into();
                     }
-                    Some(json!({
-                        "url": url,
+                    validated_tracks.push(json!({
+                        "url": clean_url,
                         "language": truncated,
-                    }))
-                })
-                .collect::<Vec<_>>()
-        });
+                    }));
+                }
+            }
+            Some(validated_tracks)
+        }
+        None => None,
+    };
     let mut map = serde_json::Map::new();
     map.insert("video".into(), stream(value.get("video"))?);
     map.insert("audio".into(), stream(value.get("audio"))?);
     if let Some(tracks) = subtitle_tracks {
         map.insert("subtitleTracks".into(), Value::Array(tracks));
     }
-    map.insert("preparedAt".into(), json!(0));
+    let prepared_at = value
+        .get("preparedAt")
+        .and_then(Value::as_i64)
+        .filter(|&t| t > 0)
+        .unwrap_or_else(crate::lifetime::now_ms);
+    map.insert("preparedAt".into(), json!(prepared_at));
     Ok(Value::Object(map))
 }
 
@@ -375,6 +429,37 @@ pub fn enqueue(
         jobs.push(task);
     }
     Ok(jobs)
+}
+
+pub fn edit_task(task: &mut Value, options_val: &Value) -> Result<Value, String> {
+    let status = task.get("status").and_then(Value::as_str).unwrap_or("");
+    if status != "pending" && status != "failed" {
+        return Err("只能修改待下载或失败任务".into());
+    }
+
+    let output_empty = match task.get("output") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.is_empty(),
+        _ => false,
+    };
+    let artifacts_empty = match task.get("artifacts") {
+        None | Some(Value::Null) => true,
+        Some(Value::Object(map)) => map.is_empty(),
+        _ => false,
+    };
+    if !output_empty || !artifacts_empty {
+        return Err("已有输出文件的任务不可改配置，请重新添加".into());
+    }
+
+    let validated = validate_options(options_val)?;
+    let options_json = serde_json::to_value(&validated).map_err(|e| e.to_string())?;
+
+    let obj = task.as_object_mut().ok_or("任务数据格式错误")?;
+    obj.insert("options".into(), options_json);
+    obj.insert("updatedAt".into(), Value::String(service_now()));
+    obj.remove("prepared");
+
+    Ok(public_task(task))
 }
 
 #[derive(Debug, Default, Clone, Copy, serde::Serialize)]
@@ -643,5 +728,129 @@ mod tests {
         assert_eq!(counts.failed, 1);
         let result = query(&tasks, &json!({ "tab": "failed" })).unwrap();
         assert_eq!(result.total, 1);
+    }
+
+    #[test]
+    fn validate_prepared_domains_timestamp_and_local() {
+        let valid_payload = json!({
+            "video": {
+                "urls": ["//xy.bilivideo.com/video.m4s", "http://upos-sz-mirror08c.akamaized.net/upgcxcode/1.m4s"],
+                "quality": 80
+            },
+            "audio": {
+                "urls": ["http://127.0.0.1:8080/audio.m4s", "http://localhost/audio2.m4s"],
+                "quality": 30280
+            },
+            "subtitleTracks": [
+                { "url": "//i0.hdslb.com/sub.json", "language": "zh-CN" }
+            ]
+        });
+
+        let res = validate_prepared(&valid_payload).unwrap();
+        let video_urls = res["video"]["urls"].as_array().unwrap();
+        assert_eq!(video_urls[0], "https://xy.bilivideo.com/video.m4s");
+        assert_eq!(video_urls[1], "https://upos-sz-mirror08c.akamaized.net/upgcxcode/1.m4s");
+
+        let audio_urls = res["audio"]["urls"].as_array().unwrap();
+        assert_eq!(audio_urls[0], "http://127.0.0.1:8080/audio.m4s");
+        assert_eq!(audio_urls[1], "http://localhost/audio2.m4s");
+
+        let subs = res["subtitleTracks"].as_array().unwrap();
+        assert_eq!(subs[0]["url"], "https://i0.hdslb.com/sub.json");
+
+        assert!(res["preparedAt"].as_i64().unwrap() > 0);
+
+        let with_timestamp = json!({
+            "video": { "urls": ["https://xy.bilivideo.com/video.m4s"] },
+            "preparedAt": 999999
+        });
+        let res2 = validate_prepared(&with_timestamp).unwrap();
+        assert_eq!(res2["preparedAt"], 999999);
+
+        let invalid_domain = json!({
+            "video": { "urls": ["https://evil.com/video.m4s"] }
+        });
+        assert_eq!(
+            validate_prepared(&invalid_domain).unwrap_err(),
+            "视频接口返回了不受支持的媒体地址（evil.com）"
+        );
+
+        let invalid_sub = json!({
+            "video": { "urls": ["https://xy.bilivideo.com/video.m4s"] },
+            "subtitleTracks": [{ "url": "https://malicious.org/sub.srt" }]
+        });
+        assert_eq!(
+            validate_prepared(&invalid_sub).unwrap_err(),
+            "视频接口返回了不受支持的媒体地址（malicious.org）"
+        );
+    }
+
+    #[test]
+    fn edit_task_behavior_and_guards() {
+        let mut pending_task = json!({
+            "id": "t1",
+            "status": "pending",
+            "options": { "quality": 64 },
+            "prepared": { "secret": "token" },
+            "output": null,
+            "artifacts": {}
+        });
+
+        let updated = edit_task(&mut pending_task, &json!({ "quality": 80 })).unwrap();
+        assert_eq!(pending_task["options"]["quality"], 80);
+        assert!(pending_task.get("prepared").is_none());
+        assert!(pending_task.get("updatedAt").is_some());
+        assert_eq!(updated["options"]["quality"], 80);
+        assert!(updated.get("prepared").is_none());
+
+        let mut failed_task = json!({
+            "id": "t2",
+            "status": "failed",
+            "options": { "quality": 64 },
+            "output": "",
+            "artifacts": null
+        });
+        assert!(edit_task(&mut failed_task, &json!({ "quality": 116 })).is_ok());
+
+        let mut running_task = json!({
+            "id": "t3",
+            "status": "downloading",
+            "options": {}
+        });
+        assert_eq!(
+            edit_task(&mut running_task, &json!({})).unwrap_err(),
+            "只能修改待下载或失败任务"
+        );
+
+        let mut completed_task = json!({
+            "id": "t4",
+            "status": "completed",
+            "options": {}
+        });
+        assert_eq!(
+            edit_task(&mut completed_task, &json!({})).unwrap_err(),
+            "只能修改待下载或失败任务"
+        );
+
+        let mut task_with_output = json!({
+            "id": "t5",
+            "status": "pending",
+            "output": "C:\\videos\\output.mp4"
+        });
+        assert_eq!(
+            edit_task(&mut task_with_output, &json!({})).unwrap_err(),
+            "已有输出文件的任务不可改配置，请重新添加"
+        );
+
+        let mut task_with_artifacts = json!({
+            "id": "t6",
+            "status": "failed",
+            "output": null,
+            "artifacts": { "video": "C:\\videos\\video.mp4" }
+        });
+        assert_eq!(
+            edit_task(&mut task_with_artifacts, &json!({})).unwrap_err(),
+            "已有输出文件的任务不可改配置，请重新添加"
+        );
     }
 }

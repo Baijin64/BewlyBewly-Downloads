@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 const installedRoot = process.argv[2]
 assert.ok(installedRoot && path.isAbsolute(installedRoot) && installedRoot.includes('WindowsApps'))
 const alias = path.join(process.env.LOCALAPPDATA, 'Microsoft/WindowsApps/BewlyDownloadHost.exe')
-const identity = JSON.parse(await readFile('native/identity.json', 'utf8'))
+const identity = JSON.parse(await readFile('platforms/identity.json', 'utf8'))
 const version = JSON.parse(await readFile('native/package.json', 'utf8')).version
 const directory = await mkdtemp(path.join(tmpdir(), 'bewly-installed-runtime-'))
 const data = path.join(directory, 'data')

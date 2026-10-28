@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bewly_core::formats::output_location;
-use bewly_core::naming::Streams;
+use bewly_core::naming::{AudioStream, Streams, VideoStream};
 use bewly_engine::transfer::{self, Request};
 use serde_json::{json, Value};
 
@@ -129,6 +129,83 @@ fn fail(state: &ServiceState, task: &mut Value, message: &str) {
     state.save_snapshot();
 }
 
+pub fn stream_from_prepared_video(video: &Value) -> Option<VideoStream> {
+    if video.is_null() || !video.is_object() {
+        return None;
+    }
+    let quality = video.get("quality").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let codec_num = video
+        .get("codecid")
+        .and_then(Value::as_u64)
+        .or_else(|| video.get("codec").and_then(Value::as_u64))
+        .or_else(|| {
+            video.get("codec").and_then(Value::as_str).and_then(|s| match s {
+                "avc" | "avc1" => Some(7),
+                "hevc" | "hev1" | "hvc1" => Some(12),
+                "av1" | "av01" => Some(13),
+                other => other.parse::<u64>().ok(),
+            })
+        })
+        .unwrap_or(0) as u32;
+    let codecs = video
+        .get("codecs")
+        .and_then(Value::as_str)
+        .or_else(|| video.get("codec").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string();
+    let bandwidth = video.get("bandwidth").and_then(Value::as_f64).unwrap_or(0.0);
+    let urls: Vec<String> = video
+        .get("urls")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(|u| u.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if quality == 0 && urls.is_empty() {
+        return None;
+    }
+    Some(VideoStream {
+        quality,
+        codec: codec_num,
+        codecs,
+        bandwidth,
+        urls,
+    })
+}
+
+pub fn stream_from_prepared_audio(audio: &Value) -> Option<AudioStream> {
+    if audio.is_null() || !audio.is_object() {
+        return None;
+    }
+    let id = audio.get("id").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let codecs = audio
+        .get("codecs")
+        .and_then(Value::as_str)
+        .or_else(|| audio.get("codec").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string();
+    let bandwidth = audio.get("bandwidth").and_then(Value::as_f64).unwrap_or(0.0);
+    let urls: Vec<String> = audio
+        .get("urls")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(|u| u.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if id == 0 && urls.is_empty() {
+        return None;
+    }
+    Some(AudioStream {
+        id,
+        codecs,
+        bandwidth,
+        urls,
+    })
+}
+
+pub fn streams_from_prepared(prepared: &Value) -> Streams {
+    Streams {
+        video: stream_from_prepared_video(prepared.get("video").unwrap_or(&Value::Null)),
+        audio: stream_from_prepared_audio(prepared.get("audio").unwrap_or(&Value::Null)),
+    }
+}
+
 fn download_stream(
     state: &Arc<ServiceState>,
     task: &mut Value,
@@ -159,6 +236,16 @@ fn download_stream(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
+    let progress_task_id = task_id.clone();
+
+    let mut last_tick = std::time::Instant::now();
+    let mut last_bytes = 0u64;
+    let mut last_write = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_millis(200))
+        .unwrap_or_else(std::time::Instant::now);
+    let mut initialized = false;
+    let mut current_speed = 0u64;
+
     let result = transfer::download(
         Request {
             urls: &urls,
@@ -172,13 +259,40 @@ fn download_stream(
         },
         Arc::clone(cancel),
         move |completed, total| {
-            let percent = (completed * 100).checked_div(total).unwrap_or(0) as u32;
-            if let Ok(Some(mut current)) = state_progress.store().task(&task_id) {
-                current["progress"] = json!(percent);
-                let _ = state_progress.store().put_task(&current);
+            let now = std::time::Instant::now();
+            if !initialized {
+                initialized = true;
+                last_tick = now;
+                last_bytes = completed;
+            } else {
+                let elapsed = now.duration_since(last_tick).as_secs_f64();
+                if elapsed >= 0.15 {
+                    let delta = completed.saturating_sub(last_bytes);
+                    current_speed = (delta as f64 / elapsed) as u64;
+                    last_tick = now;
+                    last_bytes = completed;
+                }
+            }
+
+            let is_complete = completed >= total && total > 0;
+            if is_complete || last_write.elapsed() >= std::time::Duration::from_millis(150) {
+                last_write = now;
+                let speed = if is_complete { 0 } else { current_speed };
+                let percent = (completed * 100).checked_div(total).unwrap_or(0) as u32;
+                let store = state_progress.store();
+                if let Ok(Some(mut current)) = store.task(&progress_task_id) {
+                    current["progress"] = json!(percent);
+                    current["speed"] = json!(speed);
+                    let _ = store.put_task(&current);
+                }
             }
         },
     );
+
+    if let Ok(Some(latest)) = state.store().task(&task_id) {
+        *task = latest;
+    }
+
     match result {
         Ok(path) => Ok(Some(path)),
         Err(bewly_engine::transfer::EngineError::Cancelled) => Err("下载已取消".into()),
@@ -187,15 +301,34 @@ fn download_stream(
 }
 
 fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(), String> {
+    state.policy.lock().unwrap_or_else(|p| p.into_inner()).started(id);
     let Some(mut task) = state.store().task(id).map_err(|error| error.to_string())? else {
         return Ok(());
     };
-    update(
-        state,
-        &mut task,
-        json!({ "status": "downloading", "progress": 0, "speed": 0, "error": "" }),
-    );
-    state.save_snapshot();
+    if task.get("status").and_then(Value::as_str) != Some("queued") {
+        return Ok(());
+    }
+
+    let handle_cancel = |task: &mut Value| -> Result<(), String> {
+        let is_cancelled = state
+            .store()
+            .task(id)
+            .ok()
+            .flatten()
+            .and_then(|t| t.get("status").and_then(Value::as_str).map(|s| s == "cancelled"))
+            .unwrap_or(false);
+        if is_cancelled {
+            update(state, task, json!({ "status": "cancelled", "speed": 0 }));
+        } else {
+            update(state, task, json!({ "status": "paused", "speed": 0 }));
+        }
+        state.save_snapshot();
+        Ok(())
+    };
+
+    if cancel.load(Ordering::Relaxed) {
+        return handle_cancel(&mut task);
+    }
 
     let options =
         match bewly_core::formats::validate_options(task.get("options").unwrap_or(&json!({}))) {
@@ -205,13 +338,40 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
                 return Ok(());
             }
         };
+
+    let need_video = options
+        .outputs
+        .iter()
+        .any(|kind| kind == "video" || kind == "silent");
+    let need_audio = options
+        .outputs
+        .iter()
+        .any(|kind| kind == "video" || kind == "audio" || kind == "mp3");
+
+    let workdir = state.data_directory.join("partial").join(id);
+    std::fs::create_dir_all(&workdir).map_err(|error| error.to_string())?;
+
     let mut prepared = task.get("prepared").cloned().unwrap_or(Value::Null);
-    if prepared.is_null() {
-        let cookie = state
-            .cookie
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
+
+    let cookie = state
+        .cookie
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let has_cookie = !cookie.trim().is_empty();
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let prepared_at = prepared
+        .get("preparedAt")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let expired = prepared_at > 0 && now_ms.saturating_sub(prepared_at) >= 20 * 60_000;
+
+    if (need_video || need_audio) && (prepared.is_null() || (expired && has_cookie)) {
+        update(state, &mut task, json!({ "status": "resolving", "speed": 0 }));
         let bvid = task.get("bvid").and_then(Value::as_str).unwrap_or("");
         let cid = task.get("cid").and_then(Value::as_u64).unwrap_or(0);
         match crate::net::resolve(
@@ -235,20 +395,61 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
         }
     }
 
-    let workdir = state.data_directory.join("partial").join(id);
-    std::fs::create_dir_all(&workdir).map_err(|error| error.to_string())?;
+    if cancel.load(Ordering::Relaxed) {
+        return handle_cancel(&mut task);
+    }
 
-    let need_video = options
-        .outputs
-        .iter()
-        .any(|kind| kind == "video" || kind == "silent");
-    let need_audio = options
-        .outputs
-        .iter()
-        .any(|kind| kind == "video" || kind == "audio" || kind == "mp3");
+    let prev_quality = task.get("actualQuality");
+    let prev_codec = task.get("actualCodec");
+    let prev_audio_id = task.get("actualAudioId");
+
+    let curr_quality = prepared.get("video").and_then(|v| v.get("quality"));
+    let curr_codec = prepared.get("video").and_then(|v| v.get("codec"));
+    let curr_audio_id = prepared.get("audio").and_then(|a| a.get("id"));
+
+    let has_quality_mismatch = prev_quality
+        .map(|v| !v.is_null() && Some(v) != curr_quality)
+        .unwrap_or(false);
+    let has_codec_mismatch = prev_codec
+        .map(|v| !v.is_null() && Some(v) != curr_codec)
+        .unwrap_or(false);
+    let has_audio_mismatch = prev_audio_id
+        .map(|v| !v.is_null() && Some(v) != curr_audio_id)
+        .unwrap_or(false);
+
+    if has_quality_mismatch || has_codec_mismatch || has_audio_mismatch {
+        for file_name in &[
+            "video.m4s",
+            "video.m4s.aria2",
+            "video.m4s.bewly.json",
+            "audio.m4a",
+            "audio.m4a.aria2",
+            "audio.m4a.bewly.json",
+        ] {
+            let _ = std::fs::remove_file(workdir.join(file_name));
+        }
+    }
+
+    let current_progress = task.get("progress").and_then(Value::as_u64).unwrap_or(0);
+    update(
+        state,
+        &mut task,
+        json!({
+            "status": "downloading",
+            "progress": current_progress,
+            "speed": 0,
+            "error": "",
+            "actualQuality": curr_quality,
+            "actualCodec": curr_codec,
+            "actualAudioId": curr_audio_id,
+        }),
+    );
+    state.save_snapshot();
+
+    let mut refreshed = false;
 
     let video = if need_video {
-        download_stream(
+        let mut res = download_stream(
             state,
             &mut task,
             &cancel,
@@ -256,20 +457,85 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
             &prepared["video"],
             &workdir,
             "video.m4s",
-        )?
+        );
+        if let Err(ref err) = res {
+            let cookie = state
+                .cookie
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            if !cancel.load(Ordering::Relaxed)
+                && !err.contains("磁盘空间不足")
+                && !refreshed
+                && !cookie.trim().is_empty()
+            {
+                refreshed = true;
+                let _ = refreshed;
+                let bvid = task.get("bvid").and_then(Value::as_str).unwrap_or("");
+                let cid = task.get("cid").and_then(Value::as_u64).unwrap_or(0);
+                match crate::net::resolve(
+                    bvid,
+                    cid,
+                    options.quality,
+                    &options.audio_quality,
+                    &options.outputs,
+                    &options.codec,
+                    &cookie,
+                ) {
+                    Ok(new_prepared) => {
+                        let q_old = prepared.get("video").and_then(|v| v.get("quality"));
+                        let q_new = new_prepared.get("video").and_then(|v| v.get("quality"));
+                        let c_old = prepared.get("video").and_then(|v| v.get("codec"));
+                        let c_new = new_prepared.get("video").and_then(|v| v.get("codec"));
+                        let a_old = prepared.get("audio").and_then(|a| a.get("id"));
+                        let a_new = new_prepared.get("audio").and_then(|a| a.get("id"));
+                        if q_old != q_new || c_old != c_new || a_old != a_new {
+                            fail(state, &mut task, "媒体规格已变化，请重新添加任务");
+                            return Ok(());
+                        }
+                        task["prepared"] = new_prepared.clone();
+                        let _ = state.store().put_task(&task);
+                        prepared = new_prepared;
+                        res = download_stream(
+                            state,
+                            &mut task,
+                            &cancel,
+                            "video",
+                            &prepared["video"],
+                            &workdir,
+                            "video.m4s",
+                        );
+                    }
+                    Err(e) => {
+                        fail(state, &mut task, &e);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        match res {
+            Ok(path) => path,
+            Err(err) => {
+                if cancel.load(Ordering::Relaxed) || err == "下载已取消" {
+                    return handle_cancel(&mut task);
+                }
+                fail(state, &mut task, &err);
+                return Ok(());
+            }
+        }
     } else {
         None
     };
     if cancel.load(Ordering::Relaxed) {
-        update(state, &mut task, json!({ "status": "paused", "speed": 0 }));
-        return Ok(());
+        return handle_cancel(&mut task);
     }
     if need_video && video.is_none() {
         fail(state, &mut task, "没有所选视频流");
         return Ok(());
     }
+
     let audio = if need_audio {
-        download_stream(
+        let mut res = download_stream(
             state,
             &mut task,
             &cancel,
@@ -277,13 +543,77 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
             &prepared["audio"],
             &workdir,
             "audio.m4a",
-        )?
+        );
+        if let Err(ref err) = res {
+            let cookie = state
+                .cookie
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            if !cancel.load(Ordering::Relaxed)
+                && !err.contains("磁盘空间不足")
+                && !refreshed
+                && !cookie.trim().is_empty()
+            {
+                refreshed = true;
+                let _ = refreshed;
+                let bvid = task.get("bvid").and_then(Value::as_str).unwrap_or("");
+                let cid = task.get("cid").and_then(Value::as_u64).unwrap_or(0);
+                match crate::net::resolve(
+                    bvid,
+                    cid,
+                    options.quality,
+                    &options.audio_quality,
+                    &options.outputs,
+                    &options.codec,
+                    &cookie,
+                ) {
+                    Ok(new_prepared) => {
+                        let q_old = prepared.get("video").and_then(|v| v.get("quality"));
+                        let q_new = new_prepared.get("video").and_then(|v| v.get("quality"));
+                        let c_old = prepared.get("video").and_then(|v| v.get("codec"));
+                        let c_new = new_prepared.get("video").and_then(|v| v.get("codec"));
+                        let a_old = prepared.get("audio").and_then(|a| a.get("id"));
+                        let a_new = new_prepared.get("audio").and_then(|a| a.get("id"));
+                        if q_old != q_new || c_old != c_new || a_old != a_new {
+                            fail(state, &mut task, "媒体规格已变化，请重新添加任务");
+                            return Ok(());
+                        }
+                        task["prepared"] = new_prepared.clone();
+                        let _ = state.store().put_task(&task);
+                        prepared = new_prepared;
+                        res = download_stream(
+                            state,
+                            &mut task,
+                            &cancel,
+                            "audio",
+                            &prepared["audio"],
+                            &workdir,
+                            "audio.m4a",
+                        );
+                    }
+                    Err(e) => {
+                        fail(state, &mut task, &e);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        match res {
+            Ok(path) => path,
+            Err(err) => {
+                if cancel.load(Ordering::Relaxed) || err == "下载已取消" {
+                    return handle_cancel(&mut task);
+                }
+                fail(state, &mut task, &err);
+                return Ok(());
+            }
+        }
     } else {
         None
     };
     if cancel.load(Ordering::Relaxed) {
-        update(state, &mut task, json!({ "status": "paused", "speed": 0 }));
-        return Ok(());
+        return handle_cancel(&mut task);
     }
     if need_audio && audio.is_none() {
         fail(state, &mut task, "没有所选音频流");
@@ -299,7 +629,8 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
     let multiple_media = media_kinds.len() > 1;
 
     let view = tasks::view_of(&task, &state.settings().directory);
-    let (directory, basename) = match output_location(&view, &Streams::default()) {
+    let streams = streams_from_prepared(&prepared);
+    let (directory, basename) = match output_location(&view, &streams) {
         Ok(location) => location,
         Err(error) => {
             fail(state, &mut task, &error);
@@ -373,8 +704,7 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
     }
 
     if cancel.load(Ordering::Relaxed) {
-        update(state, &mut task, json!({ "status": "paused", "speed": 0 }));
-        return Ok(());
+        return handle_cancel(&mut task);
     }
 
     update(
@@ -548,6 +878,7 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
             "completedAt": tasks::service_now(),
         }),
     );
+    state.policy.lock().unwrap_or_else(|p| p.into_inner()).finished();
     state.save_snapshot();
     let _ = std::fs::remove_dir_all(&workdir);
     Ok(())
@@ -580,8 +911,66 @@ pub type RunningMap = HashMap<String, Arc<AtomicBool>>;
 
 #[cfg(test)]
 mod tests {
-    use super::extension_for;
+    use super::*;
 
+    #[test]
+    fn streams_from_prepared_populates_naming_tokens() {
+        let prepared = json!({
+            "preparedAt": 1700000000000u64,
+            "video": {
+                "quality": 80,
+                "codec": "avc",
+                "codecid": 7,
+                "codecs": "avc1.640028",
+                "bandwidth": 1500000.0,
+                "urls": ["http://example.com/v.m4s"],
+            },
+            "audio": {
+                "id": 30280,
+                "codecs": "mp4a.40.2",
+                "bandwidth": 192000.0,
+                "urls": ["http://example.com/a.m4a"],
+            }
+        });
+
+        let streams = streams_from_prepared(&prepared);
+        assert!(streams.video.is_some());
+        assert!(streams.audio.is_some());
+        let v = streams.video.as_ref().unwrap();
+        assert_eq!(v.quality, 80);
+        assert_eq!(v.codec, 7);
+        assert_eq!(v.codecs, "avc1.640028");
+        let a = streams.audio.as_ref().unwrap();
+        assert_eq!(a.id, 30280);
+        assert_eq!(a.codecs, "mp4a.40.2");
+
+        let task = json!({
+            "id": "test-task-1",
+            "title": "测试视频",
+            "bvid": "BV1xx411c7mD",
+            "cid": 12345,
+            "filenameTemplate": "%title%_%vqn%_%aqn%",
+            "options": {
+                "filenameTemplate": "%title%_%vqn%_%aqn%",
+            }
+        });
+        let view = tasks::view_of(&task, "D:/downloads");
+        let (_dir, name) = output_location(&view, &streams).unwrap();
+        assert!(name.contains("1080P"), "expected 1080P in name, got: {name}");
+        assert!(name.contains("192K"), "expected 192K in name, got: {name}");
+
+        // Contrast with default empty streams
+        let (_dir, default_name) = output_location(&view, &Streams::default()).unwrap();
+        assert!(!default_name.contains("1080P"));
+        assert!(!default_name.contains("192K"));
+    }
+
+    #[test]
+    fn streams_from_null_or_empty_prepared_returns_none() {
+        let streams = streams_from_prepared(&json!({}));
+        assert!(streams.video.is_none());
+        assert!(streams.audio.is_none());
+    }
     #[test]
     fn extensions_follow_the_node_rules() {
         assert_eq!(extension_for("video", false, false, 80, false), ("mp4", ""));

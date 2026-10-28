@@ -1,7 +1,7 @@
 import browser from 'webextension-polyfill'
 
-import { planLocation, validateTemplate } from '../../native/naming.mjs'
-import { uiTask } from '../../native/ui-task.mjs'
+import { planLocation, validateTemplate } from '../download/naming'
+import { uiTask } from '../download/uiTask'
 import type { DownloadReply, DownloadTask, HelperRuntime, HelperSettings, HelperStatus, TaskQuery } from '../download/types'
 import { defaultOptions } from '../download/types'
 

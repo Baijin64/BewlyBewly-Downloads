@@ -22,6 +22,65 @@ fn number(value: Option<&Value>) -> Option<f64> {
     }
 }
 
+pub fn default_legacy_profile() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            if !appdata.is_empty() {
+                return Some(PathBuf::from(appdata).join("bilidown"));
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() {
+                return Some(
+                    PathBuf::from(home)
+                        .join("Library")
+                        .join("Application Support")
+                        .join("bilidown"),
+                );
+            }
+        }
+        None
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+pub fn is_legacy_app_running() -> bool {
+    if std::env::var("BEWLY_SKIP_LEGACY_PROCESS_CHECK").as_deref() == Ok("1") {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("tasklist.exe")
+            .args(["/FI", "IMAGENAME eq Bilidown.exe", "/FO", "CSV", "/NH"])
+            .creation_flags(0x08000000)
+            .output();
+        match output {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+                text.contains("bilidown.exe")
+            }
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("pgrep")
+            .args(["-x", "Bilidown"])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+}
+
 pub fn decode_bilidownexport(content: &str) -> Result<String, String> {
     let units: Vec<u16> = content.encode_utf16().map(|u| u ^ 54).collect();
     String::from_utf16(&units).map_err(|e| format!("无法读取 Bilidown 历史导出文件：{e}"))
@@ -241,6 +300,9 @@ fn snapshot_leveldb(source: &Path, data_directory: &Path) -> Result<PathBuf, Str
 }
 
 pub fn read_legacy_settings(profile: &Path, data_directory: &Path) -> Result<Value, String> {
+    if is_legacy_app_running() {
+        return Err("请先退出旧版 Bilidown，再读取配置，避免复制到使用中的数据库".into());
+    }
     let source = profile.join("Local Storage").join("leveldb");
     let snapshot = snapshot_leveldb(&source, data_directory)?;
     let result = (|| {
@@ -285,12 +347,16 @@ pub fn preview(
     ];
 
     let mut settings_val = Value::Null;
-    let profile = params
+    let mut profile = params
         .get("profile")
         .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
         .map(PathBuf::from);
 
     if params.get("settings").and_then(Value::as_bool) != Some(false) {
+        if profile.is_none() {
+            profile = default_legacy_profile();
+        }
         let profile_path = match profile.as_ref() {
             Some(path) if !path.as_os_str().is_empty() => path.clone(),
             _ => return Err("当前平台没有旧版 Bilidown 数据，可通过导出文件导入历史".into()),
@@ -474,5 +540,20 @@ mod tests {
             "https://i1.hdslb.com/test.png"
         );
         assert_eq!(legacy_cover("https://evil.com/cover.jpg"), "");
+    }
+
+    #[test]
+    fn default_legacy_profile_derivation() {
+        if cfg!(target_os = "windows") && std::env::var("APPDATA").is_ok() {
+            let profile = default_legacy_profile();
+            assert!(profile.is_some());
+            assert!(profile.unwrap().ends_with("bilidown"));
+        }
+    }
+
+    #[test]
+    fn process_check_honors_skip_flag() {
+        std::env::set_var("BEWLY_SKIP_LEGACY_PROCESS_CHECK", "1");
+        assert!(!is_legacy_app_running());
     }
 }

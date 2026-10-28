@@ -1,4 +1,4 @@
-import { audioRank, selectAudio } from '../../native/audio.mjs'
+import { audioRank, selectAudio } from '../download/audio'
 import type { AvailableAudioFormat, AvailableMediaFormats, AvailableVideoFormat, DownloadOptions, DownloadVideo } from '../download/types'
 import { normalizeDownloadOptions } from '../download/types'
 

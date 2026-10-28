@@ -1,9 +1,0 @@
-{
-  "name": "bewly-download-core",
-  "version": "0.2.8",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "classic-level": "3.0.0"
-  }
-}

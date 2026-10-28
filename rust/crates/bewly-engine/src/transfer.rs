@@ -175,8 +175,23 @@ pub fn download(
     } else {
         request_spec.piece_length
     };
-    let map = sidecar::load(&destination, total, piece_length)
-        .unwrap_or_else(|| PieceMap::new(total, piece_length));
+    let aria2_path = {
+        let mut p = destination.as_os_str().to_os_string();
+        p.push(".aria2");
+        PathBuf::from(p)
+    };
+    let map = sidecar::load(&destination, total, piece_length).unwrap_or_else(|| {
+        if aria2_path.exists() {
+            if let Ok(control) = crate::aria2_control::read(&aria2_path) {
+                if control.can_resume(total, piece_length) {
+                    if let Some(recovered) = PieceMap::from_bits(total, piece_length, control.bitfield) {
+                        return recovered;
+                    }
+                }
+            }
+        }
+        PieceMap::new(total, piece_length)
+    });
     if map.is_complete() && destination.exists() {
         progress(total, total);
         return Ok(destination);
@@ -279,6 +294,7 @@ pub fn download(
         return Err(EngineError::Corrupt("文件长度与远端不一致"));
     }
     let _ = std::fs::remove_file(sidecar::path_for(&destination));
+    let _ = std::fs::remove_file(&aria2_path);
     Ok(destination)
 }
 
@@ -414,6 +430,135 @@ mod tests {
 
     fn payload(size: usize) -> Vec<u8> {
         (0..size).map(|index| (index % 251) as u8).collect()
+    }
+
+    fn write_aria2_control(path: &Path, total: u64, piece_length: u32, bitfield: &[u8]) {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&1u16.to_be_bytes()); // version = 1
+        buf.extend_from_slice(&0u32.to_be_bytes()); // extension = 0
+        buf.extend_from_slice(&0u32.to_be_bytes()); // info hash len = 0
+        buf.extend_from_slice(&piece_length.to_be_bytes());
+        buf.extend_from_slice(&total.to_be_bytes());
+        buf.extend_from_slice(&0u64.to_be_bytes()); // upload_length = 0
+        buf.extend_from_slice(&(bitfield.len() as u32).to_be_bytes());
+        buf.extend_from_slice(bitfield);
+        buf.extend_from_slice(&0u32.to_be_bytes()); // num_in_flight = 0
+        std::fs::write(path, buf).unwrap();
+    }
+
+    #[test]
+    fn resumes_from_a_legacy_aria2_control_file() {
+        let piece_length = 1024u32;
+        let data = payload(4 * 1024); // 4 pieces
+        let requested_ranges: Arc<Mutex<Vec<(usize, usize)>>> = Arc::new(Mutex::new(Vec::new()));
+        let ranges_clone = requested_ranges.clone();
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let server_data = data.clone();
+        let handle = std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                let Ok(mut stream) = stream else { break };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    continue;
+                }
+                let mut range = None;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("range: bytes=") {
+                        let value = value.trim();
+                        let (start, end) = value.split_once('-').unwrap_or((value, ""));
+                        range = Some((
+                            start.parse::<usize>().unwrap_or(0),
+                            end.parse::<usize>().ok(),
+                        ));
+                    }
+                }
+                let total = server_data.len();
+                let (start, end) = match range {
+                    Some((start, Some(end))) => (start, end.min(total - 1)),
+                    Some((start, None)) => (start, total - 1),
+                    None => (0, total - 1),
+                };
+                if let Some((s, Some(e))) = range {
+                    ranges_clone.lock().unwrap().push((s, e));
+                }
+                let body = &server_data[start..=end];
+                let header = if range.is_some() {
+                    format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                };
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        let server = Server {
+            port,
+            stop,
+            handle: Some(handle),
+        };
+
+        let directory = std::env::temp_dir()
+            .join(format!("bewly-transfer-aria2-resume-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let destination = directory.join("video.m4s");
+        let aria2_path = directory.join("video.m4s.aria2");
+        let _ = std::fs::remove_file(&destination);
+        let _ = std::fs::remove_file(&aria2_path);
+        let _ = std::fs::remove_file(sidecar::path_for(&destination));
+
+        let mut initial_file = vec![0u8; 4096];
+        initial_file[0..1024].copy_from_slice(&data[0..1024]);
+        initial_file[2048..3072].copy_from_slice(&data[2048..3072]);
+        std::fs::write(&destination, &initial_file).unwrap();
+
+        write_aria2_control(&aria2_path, 4096, piece_length, &[0xA0]);
+
+        let urls = vec![server.url()];
+        let result = download(
+            Request {
+                urls: &urls,
+                destination: &destination,
+                piece_length,
+                connections: 2,
+                headers: vec![],
+            },
+            Arc::new(AtomicBool::new(false)),
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&result).unwrap(), data);
+        assert!(!aria2_path.exists(), ".aria2 control file should be removed on completion");
+        assert!(!sidecar::path_for(&destination).exists(), "sidecar file should be removed on completion");
+
+        let ranges = requested_ranges.lock().unwrap().clone();
+        for (start, end) in ranges {
+            if start == 0 && end == 0 {
+                continue;
+            }
+            assert!(
+                (start == 1024 && end == 2047) || (start == 3072 && end == 4095),
+                "unexpected range requested: {start}-{end}, expected only missing pieces 1 and 3"
+            );
+        }
     }
 
     #[test]

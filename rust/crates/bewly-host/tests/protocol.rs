@@ -550,3 +550,322 @@ fn inspect_reads_the_view_api_and_expand_passes_regular_urls() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+#[allow(clippy::zombie_processes)]
+fn start_service_headless(
+    directory: &std::path::Path,
+    grace_ms: &str,
+    member_api_base: Option<&str>,
+    api_base: Option<&str>,
+) -> (std::process::Child, u16, String) {
+    let mut cmd = Command::new(host_binary());
+    cmd.arg("--service")
+        .env("BEWLY_DOWNLOAD_DATA", directory)
+        .env("BEWLY_DOWNLOAD_MODE", "manual")
+        .env("BEWLY_IDLE_GRACE_MS", grace_ms)
+        .env("BEWLY_DOWNLOAD_HEADLESS", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(m) = member_api_base {
+        cmd.env("BEWLY_MEMBER_API_BASE", m);
+    }
+    if let Some(a) = api_base {
+        cmd.env("BEWLY_API_BASE", a);
+    }
+    let child = cmd.spawn().unwrap();
+    let descriptor_path = directory.join("connection.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&descriptor_path) {
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                let port = value["port"].as_u64().unwrap() as u16;
+                let token = value["token"].as_str().unwrap().to_string();
+                return (child, port, token);
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "service did not publish a descriptor"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn extended_tools_and_rpc_features_work() {
+    let directory = temp_directory("extended");
+
+    // Start member mock server
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let member_port = listener.local_addr().unwrap().port();
+    let member_handle = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let body = json!({
+                "code": 0,
+                "data": {
+                    "pfs": {
+                        "profile": {
+                            "jointime": 1580000000i64
+                        }
+                    }
+                }
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+
+    let (api_port, mock_bili) = mock_bilibili();
+    let (mut child, port, token) = start_service_headless(
+        &directory,
+        "0",
+        Some(&format!("http://127.0.0.1:{member_port}")),
+        Some(&format!("http://127.0.0.1:{api_port}")),
+    );
+
+    // 1. Tool tests: ccToSrt and srtToText
+    let tools_dir = temp_directory("tools-data");
+    let cc_path = tools_dir.join("subtitle.json");
+    std::fs::write(
+        &cc_path,
+        json!({
+            "body": [
+                { "from": 0.5, "to": 2.0, "content": "第一句字幕" },
+                { "from": 2.5, "to": 4.0, "content": "第二句字幕" }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let cc_res = call(
+        port,
+        &token,
+        "tool",
+        json!({
+            "op": "ccToSrt",
+            "source": cc_path.to_str().unwrap(),
+            "directory": tools_dir.to_str().unwrap()
+        }),
+    );
+    assert_eq!(cc_res["ok"], true, "{cc_res}");
+    assert_eq!(cc_res["result"]["operation"], "ccToSrt");
+    let srt_target = cc_res["result"]["path"].as_str().unwrap();
+    assert!(std::path::Path::new(srt_target).exists());
+
+    let srt_res = call(
+        port,
+        &token,
+        "tool",
+        json!({
+            "op": "srtToText",
+            "source": srt_target,
+            "directory": tools_dir.to_str().unwrap(),
+            "lineBreaks": true
+        }),
+    );
+    assert_eq!(srt_res["ok"], true, "{srt_res}");
+    assert_eq!(srt_res["result"]["operation"], "srtToText");
+    let txt_path = srt_res["result"]["path"].as_str().unwrap();
+    let text_content = std::fs::read_to_string(txt_path).unwrap();
+    assert!(text_content.contains("第一句字幕"));
+    assert!(text_content.contains("第二句字幕"));
+
+    // 2. Tool test: joinTime with mock API and session persistence
+    let jt_res = http_rpc(
+        port,
+        &token,
+        &json!({
+            "method": "tool",
+            "params": { "op": "joinTime" },
+            "session": "DedeUserID=123; SESSDATA=test_sess"
+        }),
+    );
+    assert_eq!(jt_res["ok"], true, "{jt_res}");
+    assert_eq!(jt_res["result"]["operation"], "joinTime");
+    let jt_text = jt_res["result"]["text"].as_str().unwrap();
+    assert!(jt_text.contains("2020"), "{jt_text}");
+    let _ = member_handle.join();
+
+    // Verify session.dat was written to disk
+    assert!(directory.join("session.dat").exists());
+
+    // 3. Stage tasks and batchAction: "edit"
+    let info = json!({
+        "bvid": "BV1xx411c7mD",
+        "title": "测试批量编辑",
+        "author": "UP",
+        "cover": "",
+        "uid": 1,
+        "pubdate": 1700000000,
+        "description": "",
+        "pages": [{ "cid": 101, "page": 1, "title": "P1", "duration": 10 }]
+    });
+    let staged = call(
+        port,
+        &token,
+        "stageTasks",
+        json!({ "info": info, "cids": [101] }),
+    );
+    assert_eq!(staged["ok"], true, "{staged}");
+    let task_id = staged["result"][0]["id"].as_str().unwrap();
+
+    let batch_edit = call(
+        port,
+        &token,
+        "batchAction",
+        json!({
+            "action": "edit",
+            "ids": [task_id],
+            "options": { "quality": 64 }
+        }),
+    );
+    assert_eq!(batch_edit["ok"], true, "{batch_edit}");
+    assert_eq!(batch_edit["result"]["results"][0]["options"]["quality"], 64);
+
+    // 4. taskFile: error handling and opened: true
+    let inv_action = call(
+        port,
+        &token,
+        "taskFile",
+        json!({ "id": task_id, "action": "invalid" }),
+    );
+    assert_eq!(inv_action["ok"], false);
+    assert_eq!(inv_action["error"], "无效文件操作");
+
+    let no_file = call(
+        port,
+        &token,
+        "taskFile",
+        json!({ "id": task_id, "action": "play" }),
+    );
+    assert_eq!(no_file["ok"], false);
+    assert_eq!(no_file["error"], "任务没有输出文件");
+
+    let no_folder = call(
+        port,
+        &token,
+        "taskFile",
+        json!({ "id": task_id, "action": "folder" }),
+    );
+    assert_eq!(no_folder["ok"], false);
+    assert_eq!(no_folder["error"], "任务没有输出文件");
+
+    // Configure directory to an existing folder
+    let cfg_dir = call(
+        port,
+        &token,
+        "configure",
+        json!({ "directory": tools_dir.to_str().unwrap() }),
+    );
+    assert_eq!(cfg_dir["ok"], true);
+
+    // Action "folder" without ID succeeds with settings directory
+    let folder_res = call(
+        port,
+        &token,
+        "taskFile",
+        json!({ "action": "folder" }),
+    );
+    assert_eq!(folder_res["ok"], true, "{folder_res}");
+    assert_eq!(folder_res["result"]["opened"], true);
+
+    // 5. taskAction: "remove" cleans up partial directory
+    let partial_dir = directory.join("partial").join(task_id);
+    std::fs::create_dir_all(&partial_dir).unwrap();
+    assert!(partial_dir.exists());
+
+    let rem_res = call(
+        port,
+        &token,
+        "taskAction",
+        json!({ "id": task_id, "action": "remove" }),
+    );
+    assert_eq!(rem_res["ok"], true, "{rem_res}");
+    assert_eq!(rem_res["result"]["removed"], true);
+    assert!(!partial_dir.exists(), "partial directory must be removed");
+
+    // 6. clipboardVideo
+    // Before enabling clipboard listening:
+    let clip_disabled = call(
+        port,
+        &token,
+        "clipboardVideo",
+        json!({ "video": "https://www.bilibili.com/video/BV17x411w7KC" }),
+    );
+    assert_eq!(clip_disabled["ok"], false);
+    assert_eq!(clip_disabled["error"], "剪贴板监听未启用");
+
+    // Enable clipboard listening
+    let cfg = call(
+        port,
+        &token,
+        "configure",
+        json!({ "listenClipboard": true }),
+    );
+    assert_eq!(cfg["ok"], true);
+
+    let clip_ok = call(
+        port,
+        &token,
+        "clipboardVideo",
+        json!({ "video": "https://www.bilibili.com/video/BV17x411w7KC" }),
+    );
+    assert_eq!(clip_ok["ok"], true, "{clip_ok}");
+    assert_eq!(clip_ok["result"][0]["bvid"], "BV17x411w7KC");
+    assert_eq!(clip_ok["result"][0]["status"], "pending");
+    let _ = mock_bili.join();
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn stdio_host_relays_session_and_persists_cookie() {
+    let directory = temp_directory("stdio-session");
+    let identity = identity_file(&directory);
+    let data = directory.join("data");
+
+    let mut child = Command::new(host_binary())
+        .arg("chrome-extension://abcdefghijklmnopabcdefghijklmnop/")
+        .env("BEWLY_DOWNLOAD_DATA", &data)
+        .env("BEWLY_IDENTITY_FILE", &identity)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    // Send health request with allowStart = true and session
+    let res = request(
+        &mut stdout,
+        &mut stdin,
+        json!({
+            "method": "health",
+            "allowStart": true,
+            "session": "DedeUserID=888; SESSDATA=stdio_session_token",
+            "requestId": 42
+        }),
+    );
+    assert_eq!(res["ok"], true, "{res}");
+    assert_eq!(res["requestId"], 42);
+
+    // Give service a moment to persist session.dat
+    std::thread::sleep(Duration::from_millis(200));
+    let session_file = data.join("session.dat");
+    assert!(session_file.exists(), "session.dat must exist on disk");
+
+    drop(stdin);
+    let _ = child.kill();
+    let _ = child.wait();
+}

@@ -94,7 +94,7 @@ export async function buildDarwin({ repoRoot, target, bin, stageOnly, out, clean
   ].join('\n') + '\n')
 
   console.log('编译菜单栏托盘…')
-  run('xcrun', ['swiftc', '-O', '-target', `${arch}-apple-macos11.0`, path.join(repoRoot, 'native', 'macos', 'BewlyTray.swift'), '-o', path.join(stage, 'BewlyTray')])
+  run('xcrun', ['swiftc', '-O', '-target', `${arch}-apple-macos11.0`, path.join(repoRoot, 'platforms', 'macos', 'BewlyTray.swift'), '-o', path.join(stage, 'BewlyTray')])
   chmodSync(path.join(stage, 'BewlyTray'), 0o755)
 
   if (stageOnly) { console.log('Unpacked macOS helper: ' + stage); return stage }
@@ -116,7 +116,7 @@ export async function buildDarwin({ repoRoot, target, bin, stageOnly, out, clean
   run('xcrun', ['clang', '-O2', '-arch', arch, path.join(repoRoot, 'native', 'macos', 'launcher.c'), '-o', path.join(contents, 'MacOS', 'BewlyDownload')])
   chmodSync(path.join(contents, 'MacOS', 'BewlyDownload'), 0o755)
 
-  const plist = readFileSync(path.join(repoRoot, 'native', 'macos', 'Info.plist'), 'utf8').replaceAll('0.2.8', version)
+  const plist = readFileSync(path.join(repoRoot, 'platforms', 'macos', 'Info.plist'), 'utf8').replaceAll('0.2.8', version)
   writeFileSync(path.join(contents, 'Info.plist'), plist)
   makeIcon(repoRoot, path.join(contents, 'Resources'))
 

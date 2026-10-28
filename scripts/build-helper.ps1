@@ -44,7 +44,7 @@ Get-ChildItem -LiteralPath (Join-Path $projectRoot 'native') -File -Filter '*.mj
 foreach ($folder in @('platform','runtime')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "native\$folder") -Destination (Join-Path $stage $folder) -Recurse -Force
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'native\identity.json') -Destination (Join-Path $stage 'identity.json')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'platforms\identity.json') -Destination (Join-Path $stage 'identity.json')
 $nativeModules = Join-Path $projectRoot 'native\node_modules'
 if (-not (Test-Path -LiteralPath (Join-Path $nativeModules 'classic-level\package.json'))) { throw 'Run npm ci --prefix native before building the helper.' }
 $stagedModules = [System.IO.Path]::GetFullPath((Join-Path $stage 'node_modules'))
@@ -65,7 +65,7 @@ Get-ChildItem -LiteralPath $nativeModules -Recurse -File | Where-Object {
     New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
     Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'native\windows\AppxManifest.xml') -Destination (Join-Path $stage 'AppxManifest.xml')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'platforms\windows\AppxManifest.xml') -Destination (Join-Path $stage 'AppxManifest.xml')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $stage 'licenses\BewlyBewly-MIT.txt')
 $nodeLicense = Join-Path $stage 'licenses\Node-LICENSE.txt'
 if (Test-Path -LiteralPath $nodeLicense) { Remove-Item -LiteralPath $nodeLicense -Force }
@@ -81,11 +81,11 @@ The exact matching third-party build sources must be supplied before public redi
 Node.js is not distributed in this package. A compatible system Node.js 24+ x64 is required.
 BewlyBewly MIT and retained dependency license notices are included in this directory.
 '@ | Set-Content -LiteralPath (Join-Path $stage 'licenses\THIRD-PARTY.txt') -Encoding utf8
-Add-Type -Path (Join-Path $projectRoot 'native\windows\TrayArtwork.cs') -ReferencedAssemblies System.Drawing
+Add-Type -Path (Join-Path $projectRoot 'platforms\windows\TrayArtwork.cs') -ReferencedAssemblies System.Drawing
 [TrayArtwork]::WriteIcon((Join-Path $stage 'Assets\BewlyDownload.ico'))
 Copy-Item -LiteralPath (Join-Path $projectRoot 'native\windows\NativeHost.config') -Destination (Join-Path $stage 'BewlyDownloadHost.exe.config')
 $desktopSources = @('NativeHost.cs','TrayHost.cs','TrayArtwork.cs','DesktopUi.cs','NodeRuntime.cs','NodeInstaller.cs','BundledTool.cs') | ForEach-Object { Join-Path $projectRoot "native\windows\$_" }
-& $compiler /nologo /target:winexe /platform:x64 /codepage:65001 /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Security.dll "/win32manifest:$projectRoot\native\windows\NativeHost.manifest" "/win32icon:$stage\Assets\BewlyDownload.ico" "/out:$stage\BewlyDownloadHost.exe" $desktopSources
+& $compiler /nologo /target:winexe /platform:x64 /codepage:65001 /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Security.dll "/win32manifest:$projectRoot\platforms\windows\NativeHost.manifest" "/win32icon:$stage\Assets\BewlyDownload.ico" "/out:$stage\BewlyDownloadHost.exe" $desktopSources
 if ($LASTEXITCODE -ne 0) { throw 'Native host compilation failed.' }
 # MSIX tile assets: every size is rendered natively by TrayArtwork (vector metrics, never
 # downscaled from a master bitmap). Scale variants let Start menu and the Store listing pick

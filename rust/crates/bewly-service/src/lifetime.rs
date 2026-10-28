@@ -5,7 +5,9 @@
 //! `health` and `queryTasks` deliberately do not touch the lease, otherwise a
 //! polling UI would keep the process alive forever.
 
+use std::collections::HashSet;
 use std::sync::Mutex;
+use serde_json::Value;
 
 pub const ON_DEMAND_GRACE_MS: i64 = 5000;
 
@@ -98,6 +100,95 @@ impl SharedLifetime {
     }
 }
 
+/// Completion policy ported from `native/completion.mjs`.
+/// Coordinates scheduled shutdown after queued/started tasks succeed.
+#[derive(Debug, Default, Clone)]
+pub struct CompletionPolicy {
+    pub ids: HashSet<String>,
+    pub due: i64,
+    pub cancelled: bool,
+    pub completed: u64,
+}
+
+impl CompletionPolicy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn begin(&mut self, tasks: &[Value]) {
+        let has_active = tasks.iter().any(|task| {
+            let status = task.get("status").and_then(Value::as_str).unwrap_or("");
+            matches!(
+                status,
+                "queued" | "resolving" | "downloading" | "paused" | "muxing" | "postprocessing"
+            )
+        });
+        if !has_active {
+            self.ids.clear();
+            self.cancelled = false;
+        }
+        self.due = 0;
+    }
+
+    pub fn started(&mut self, id: &str) {
+        self.ids.insert(id.to_string());
+        self.due = 0;
+    }
+
+    pub fn finished(&mut self) {
+        self.completed += 1;
+    }
+
+    pub fn cancel(&mut self) {
+        self.cancelled = true;
+        self.due = 0;
+    }
+
+    pub fn evaluate(&mut self, tasks: &[Value], enabled: bool, now: i64) -> i64 {
+        let waiting = tasks.iter().any(|task| {
+            let status = task.get("status").and_then(Value::as_str).unwrap_or("");
+            matches!(
+                status,
+                "pending"
+                    | "queued"
+                    | "resolving"
+                    | "downloading"
+                    | "paused"
+                    | "muxing"
+                    | "postprocessing"
+            )
+        });
+        let all_succeeded = !self.ids.is_empty()
+            && self.ids.iter().all(|id| {
+                if let Some(task) = tasks
+                    .iter()
+                    .find(|t| t.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                {
+                    let is_completed =
+                        task.get("status").and_then(Value::as_str) == Some("completed");
+                    let no_warnings = match task.get("warnings") {
+                        None => true,
+                        Some(Value::Null) => true,
+                        Some(Value::Array(arr)) => arr.is_empty(),
+                        _ => false,
+                    };
+                    is_completed && no_warnings
+                } else {
+                    false
+                }
+            });
+
+        if !enabled || waiting || !all_succeeded || self.cancelled {
+            self.due = 0;
+            return 0;
+        }
+        if self.due == 0 {
+            self.due = now + 30_000;
+        }
+        self.due
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +230,91 @@ mod tests {
         lifetime.touch();
         let second = lifetime.snapshot(false, 0).exit_at.unwrap();
         assert!(second > first);
+    }
+
+    #[test]
+    fn completion_policy_shutdown_lifecycle() {
+        let mut policy = CompletionPolicy::new();
+        let old = serde_json::json!([{ "id": "old", "status": "completed" }]);
+        assert_eq!(policy.evaluate(old.as_array().unwrap(), true, 100), 0);
+
+        policy.begin(&[]);
+        policy.started("one");
+        policy.finished();
+        assert_eq!(policy.completed, 1);
+
+        let completed = serde_json::json!([{ "id": "one", "status": "completed" }]);
+        assert_eq!(policy.evaluate(completed.as_array().unwrap(), false, 100), 0);
+        assert_eq!(
+            policy.evaluate(completed.as_array().unwrap(), true, 100),
+            30100
+        );
+        assert_eq!(
+            policy.evaluate(completed.as_array().unwrap(), true, 1100),
+            30100
+        );
+
+        let with_pending = serde_json::json!([
+            { "id": "one", "status": "completed" },
+            { "id": "later", "status": "pending" }
+        ]);
+        assert_eq!(
+            policy.evaluate(with_pending.as_array().unwrap(), true, 2100),
+            0
+        );
+    }
+
+    #[test]
+    fn completion_policy_suppressed_by_active_or_warnings() {
+        for status in [
+            "pending",
+            "paused",
+            "failed",
+            "cancelled",
+            "queued",
+            "muxing",
+            "postprocessing",
+        ] {
+            let mut policy = CompletionPolicy::new();
+            policy.started("one");
+            let tasks = serde_json::json!([{ "id": "one", "status": status }]);
+            assert_eq!(policy.evaluate(tasks.as_array().unwrap(), true, 100), 0);
+        }
+
+        let mut removed_policy = CompletionPolicy::new();
+        removed_policy.started("removed");
+        assert_eq!(removed_policy.evaluate(&[], true, 100), 0);
+
+        let mut warning_policy = CompletionPolicy::new();
+        warning_policy.started("one");
+        let warning_tasks = serde_json::json!([
+            { "id": "one", "status": "completed", "warnings": ["字幕下载失败"] }
+        ]);
+        assert_eq!(
+            warning_policy.evaluate(warning_tasks.as_array().unwrap(), true, 100),
+            0
+        );
+    }
+
+    #[test]
+    fn completion_policy_cancellation() {
+        let mut policy = CompletionPolicy::new();
+        policy.started("one");
+        let tasks = serde_json::json!([{ "id": "one", "status": "completed" }]);
+        assert_eq!(policy.evaluate(tasks.as_array().unwrap(), true, 100), 30100);
+
+        policy.cancel();
+        assert_eq!(policy.evaluate(tasks.as_array().unwrap(), true, 100000), 0);
+
+        policy.begin(tasks.as_array().unwrap());
+        policy.started("two");
+        let tasks2 = serde_json::json!([
+            { "id": "one", "status": "completed" },
+            { "id": "two", "status": "completed" }
+        ]);
+        assert_eq!(
+            policy.evaluate(tasks2.as_array().unwrap(), true, 100000),
+            130000
+        );
     }
 }

@@ -1,4 +1,4 @@
-import { audioIds, audioRank, selectAudio } from '../../native/audio.mjs'
+import { audioIds, audioRank, selectAudio } from './audio'
 import { audioQualities, qualities } from './presentation'
 import type { AvailableAudioFormat, AvailableVideoFormat, DownloadOptions } from './types'
 

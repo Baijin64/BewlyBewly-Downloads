@@ -69,6 +69,7 @@ impl Store {
             directory: directory.to_path_buf(),
         };
         store.reset_interrupted()?;
+        store.reset_interrupted_jobs()?;
         Ok(store)
     }
 
@@ -97,6 +98,14 @@ impl Store {
             ACTIVE_STATES.join("','")
         );
         Ok(self.connection.execute(&sql, params![updated_at])?)
+    }
+
+    /// Interrupted tool jobs are marked failed on startup so the user can retry.
+    pub fn reset_interrupted_jobs(&self) -> Result<usize, StoreError> {
+        let sql = "UPDATE tool_jobs
+            SET data = json_set(data, '$.status', 'failed', '$.error', '助手重启中断了工具操作，请重试')
+          WHERE json_extract(data, '$.status') = 'running'";
+        Ok(self.connection.execute(sql, [])?)
     }
 
     pub fn tasks(&self) -> Result<Vec<Value>, StoreError> {
@@ -366,5 +375,34 @@ mod tests {
         let store = Store::open(&temp.0).unwrap();
         let settings = store.settings().unwrap().unwrap();
         assert_eq!(settings["maxConcurrent"], 4);
+    }
+
+    #[test]
+    fn resets_interrupted_tool_jobs_on_open() {
+        let temp = TempDir::new();
+        {
+            let store = Store::open(&temp.0).unwrap();
+            store
+                .put_job(
+                    "job-running",
+                    &serde_json::json!({ "id": "job-running", "status": "running" }),
+                )
+                .unwrap();
+            store
+                .put_job(
+                    "job-completed",
+                    &serde_json::json!({ "id": "job-completed", "status": "completed" }),
+                )
+                .unwrap();
+            store.close().unwrap();
+        }
+
+        let reopened = Store::open(&temp.0).unwrap();
+        let running = reopened.get_job("job-running").unwrap().unwrap();
+        assert_eq!(running["status"], "failed");
+        assert_eq!(running["error"], "助手重启中断了工具操作，请重试");
+
+        let completed = reopened.get_job("job-completed").unwrap().unwrap();
+        assert_eq!(completed["status"], "completed");
     }
 }
