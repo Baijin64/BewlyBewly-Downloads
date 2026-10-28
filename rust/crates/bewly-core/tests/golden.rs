@@ -10,6 +10,13 @@ use bewly_core::naming::{plan_location, Streams, TaskView};
 use serde::Deserialize;
 use serde_json::Value;
 
+/// The corpus was recorded in a fixed timezone; pin it so date tokens do not
+/// depend on where the test runs.
+fn pin_offset() {
+    let minutes = fixture()["offsetMinutes"].as_i64().unwrap_or(-240) as i32;
+    bewly_core::naming::set_local_offset_override(Some(minutes));
+}
+
 fn fixture() -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/golden.json");
     let text = std::fs::read_to_string(path).expect("golden fixture");
@@ -84,6 +91,7 @@ fn describe_difference(expected: &str, actual: &str) -> String {
 
 #[test]
 fn naming_matches_the_node_implementation() {
+    pin_offset();
     let golden = fixture();
     let cases: Vec<NamingCase> = serde_json::from_value(golden["cases"]["naming"].clone()).unwrap();
     assert_eq!(cases.len(), 120);
@@ -193,6 +201,7 @@ fn ass_conversion_matches_the_node_implementation() {
 
 #[test]
 fn nfo_matches_the_node_implementation() {
+    pin_offset();
     let golden = fixture();
     let cases: Vec<NfoCase> = serde_json::from_value(golden["cases"]["nfo"].clone()).unwrap();
     for (index, case) in cases.iter().enumerate() {

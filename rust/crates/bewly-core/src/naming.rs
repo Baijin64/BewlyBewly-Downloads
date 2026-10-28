@@ -179,14 +179,39 @@ pub fn validate_template(template: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Test hook for : the golden corpus records the timezone it was produced in, so
+/// comparisons stay byte-identical on any machine instead of following the
+/// runner's local offset.
+static LOCAL_OFFSET_OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<time::UtcOffset>>> =
+    std::sync::OnceLock::new();
+
+fn local_offset() -> time::UtcOffset {
+    if let Some(lock) = LOCAL_OFFSET_OVERRIDE.get() {
+        if let Ok(guard) = lock.lock() {
+            if let Some(offset) = *guard {
+                return offset;
+            }
+        }
+    }
+    time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC)
+}
+
+/// Pins the offset used by `%dd%`/`%pd%` and the NFO `premiered` tag. `None`
+/// restores the system offset.
+pub fn set_local_offset_override(minutes: Option<i32>) {
+    let value = minutes
+        .and_then(|minutes| time::UtcOffset::from_whole_seconds(minutes.saturating_mul(60)).ok());
+    let lock = LOCAL_OFFSET_OVERRIDE.get_or_init(|| std::sync::Mutex::new(None));
+    *lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
+}
+
 fn date_parts(millis: f64) -> Option<(i32, u32, u32)> {
     if !millis.is_finite() {
         return None;
     }
     let nanos = (millis * 1_000_000.0).trunc() as i128;
     let utc = time::OffsetDateTime::from_unix_timestamp_nanos(nanos).ok()?;
-    let offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-    let local = utc.to_offset(offset);
+    let local = utc.to_offset(local_offset());
     Some((local.year(), local.month() as u32, local.day() as u32))
 }
 
@@ -527,6 +552,17 @@ mod tests {
             "不支持的命名变量：%unknown%"
         );
         assert!(validate_template("%index:11%").is_err());
+    }
+
+    #[test]
+    fn date_tokens_follow_the_pinned_offset() {
+        // Epoch 0 lands on a different calendar day either side of UTC, which is
+        // exactly the drift that made the golden suite fail on a UTC runner.
+        set_local_offset_override(Some(0));
+        assert_eq!(date_value(0.0, None), "1970-01-01");
+        set_local_offset_override(Some(-240));
+        assert_eq!(date_value(0.0, None), "1969-12-31");
+        set_local_offset_override(None);
     }
 
     #[test]
