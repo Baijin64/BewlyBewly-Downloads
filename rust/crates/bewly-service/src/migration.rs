@@ -492,8 +492,10 @@ mod tests {
         // survives the migration on Windows.
         #[cfg(windows)]
         assert!(settings["directory"].as_str().unwrap().contains("视频"));
+        // The key is omitted rather than blanked, so the settings merge keeps the
+        // existing directory instead of resetting it.
         #[cfg(not(windows))]
-        assert_eq!(settings["directory"], "");
+        assert!(settings.get("directory").is_none());
     }
 
     #[test]
