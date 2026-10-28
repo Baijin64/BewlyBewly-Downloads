@@ -51,8 +51,11 @@ export function insertNamingVariable(value: string, token: string, start = value
 }
 
 export function safeName(value: unknown): string {
+  // Kept byte-identical to the Rust helper: only C0 controls are replaced, so
+  // switching to \p{Cc} (which also covers DEL/C1) would rename existing files.
+  // eslint-disable-next-line no-control-regex
   const name = String(value).normalize('NFC').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/[. ]+$/g, '').slice(0, 150)
-  return !name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) ? `_${name || 'video'}` : name
+  return !name || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) ? `_${name || 'video'}` : name
 }
 
 const tokens = new Set(['title', 'upnn', 'uid', 'aqn', 'vqn', 'bv', 'cid', 'index', 'part', 'collection', 'vtype', 'upnn-uid', 'uid-upnn', 'v'])
@@ -104,7 +107,7 @@ export function renderTemplate(template: string, task: Record<string, any>, stre
       return String(index - 1).padStart(2, '0')
     if (token === 'index:01')
       return String(index).padStart(2, '0')
-    if (/^(dd|pd)(:|$)/.test(token))
+    if (/^(?:dd|pd)(?::|$)/.test(token))
       return dateValue(token.startsWith('dd') ? task.createdAt : Number(task.pubdate || 0) * 1000, token.split(':')[1])
     return String(values[token] ?? '')
   })

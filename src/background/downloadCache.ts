@@ -1,9 +1,9 @@
 import browser from 'webextension-polyfill'
 
 import { planLocation, validateTemplate } from '../download/naming'
-import { uiTask } from '../download/uiTask'
 import type { DownloadReply, DownloadTask, HelperRuntime, HelperSettings, HelperStatus, TaskQuery } from '../download/types'
 import { defaultOptions } from '../download/types'
+import { uiTask } from '../download/uiTask'
 
 interface Snapshot { health?: HelperStatus, tasks: DownloadTask[], counts: TaskQuery['counts'], syncedAt?: string, initialized?: boolean }
 const key = 'bewly-download-snapshot'
