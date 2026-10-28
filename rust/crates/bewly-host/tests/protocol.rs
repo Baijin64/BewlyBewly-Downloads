@@ -72,7 +72,7 @@ fn stdio_host_answers_bootstrap_and_snapshot_without_starting_a_service() {
     );
     assert_eq!(bootstrap["ok"], true);
     assert_eq!(bootstrap["requestId"], 7);
-    assert_eq!(bootstrap["result"]["connectorVersion"], "0.2.8");
+    assert_eq!(bootstrap["result"]["connectorVersion"], "0.3.0");
     assert_eq!(bootstrap["result"]["runtime"]["ready"], true);
 
     let snapshot = request(

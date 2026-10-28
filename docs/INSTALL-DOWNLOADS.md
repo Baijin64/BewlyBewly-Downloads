@@ -4,13 +4,22 @@
 
 原项目：[BewlyBewly/BewlyBewly](https://github.com/BewlyBewly/BewlyBewly)。Bilidown 原作者主页：[王子周棋洛](https://zhouql.vip/)。
 
+## 当前状态（预览版）
+
+下载助手已经由 Rust 重写，不再需要 Node.js，也不再随包携带 aria2 与 FFmpeg。合流（把 DASH 的视频流和音频流合成 mp4/mkv）仍依赖 FFmpeg，而内置 libav 尚未接入，因此**预览版能解析、入队、分片下载和续传，但最后一步合流会明确报错**：
+
+> 媒体合并需要 FFmpeg，当前安装未包含该组件
+
+不想看到这个错误，可以把 `ffmpeg.exe` 放到连接器安装目录的 `bin\` 子目录，或设置环境变量 `BEWLY_FFMPEG` 指向它。等 libav 接入后这个前置条件会消失。
+
 ## 获取文件
 
 打开本仓库的 [Releases](https://github.com/Baijin64/BewlyBewly-Downloads/releases)。私有仓库需要先登录有访问权限的 GitHub 账号。
 
-- Chrome/Edge 扩展：选择名称含 Chrome 或 Downloads 的 ZIP，解压到打算长期保留的文件夹。
-- 本地连接器：下载 Bewly-DownloadHelper-0.2.8-x64.msix。
+- Chrome/Edge 扩展：选择名称含 Chrome 的 ZIP，解压到打算长期保留的文件夹。
+- 本地连接器：下载名称含 DownloadHelper 的 MSIX。
 - 其他电脑首次安装 MSIX 时，按 Windows 提示信任随包提供的 BewlyDownload-Development.cer。它是公开证书，不含私钥；只应在你了解并信任维护者时导入。也可自行构建并用自己的代码签名证书签名。
+- macOS/Linux 目前只有 `bewly-host` 原始可执行文件（tar.gz），没有安装器。
 
 开发证书说明可参考 [Microsoft 的包签名文档](https://learn.microsoft.com/en-us/windows/msix/package/create-certificate-package-signing)。本仓库不会自动更改浏览器安全策略或在后台导入证书。
 
@@ -22,22 +31,21 @@
 
 更新时覆盖原文件夹内容并重载扩展。不要在使用后删除该文件夹。
 
-CRX 签名和固定 ID 已检查，但本项目尚未通过 Chrome Web Store/Edge Add-ons 发布；直接拖入 CRX 可能被禁用。当前明确支持的本地测试入口是加载解压目录。不要为了安装而关闭浏览器安全保护或修改企业策略。
+CRX 签名和固定 ID 已检查，但本项目尚未通过 Chrome Web Store/Edge Add-ons 发布；直接拖入 CRX 可能被禁用。当前明确支持的本地测试入口是加载解压目录。不要为了安装而关闭浏览器安全保护或修改企业策略。CRX 需要 Windows 证书库里的私钥，只能在维护者本机生成，因此不随 CI 产物发布。
 
 ## Windows 本地连接器
 
 1. 安装 MSIX，然后从开始菜单打开“Bewly 下载助手”一次，完成当前用户的 Chrome/Edge Native Messaging 注册。
-2. 有兼容的 Node.js 24+ x64 时直接启动。缺少或不兼容时，在本地窗口点击“下载并安装 Node.js”，完成 Windows 安装授权。
-3. 回到 B 站下载界面，点击下载或加入待下载，首次同意按需启动；任务与设置保存在本机。
+2. 回到 B 站下载界面，点击下载或加入待下载，首次同意按需启动；任务与设置保存在本机。
 
-网页下载界面可直接打开，配置与最近记录使用本地快照，不为查看界面启动 Node 下载服务。实际执行下载、入队、修改本地配置或文件操作时才唤起；没有正在处理的任务后约 5 秒自动退出，托盘与下载引擎一起结束。Windows 手动启动默认常驻，退出安装后的首次手动会话后即可按需使用。设置中可撤回自动唤起许可；查看历史时的“刷新”只连接已经运行的助手。详见 [启动与退出规则](DOWNLOAD-LIFECYCLE.md)。
+网页下载界面可直接打开，配置与最近记录使用本地快照，不为查看界面启动下载服务。实际执行下载、入队、修改本地配置或文件操作时才唤起；没有正在处理的任务后约 5 秒自动退出，托盘与下载引擎一起结束。Windows 手动启动默认常驻，退出安装后的首次手动会话后即可按需使用。设置中可撤回自动唤起许可；查看历史时的“刷新”只连接已经运行的助手。详见 [启动与退出规则](DOWNLOAD-LIFECYCLE.md)。
 
-FFmpeg 和 aria2 随连接器提供。Node 安装程序下载后会校验 SHA-256 与 Windows 签名，临时 MSI 会清理；系统 Node 和已安装连接器保留供后续调用。
-
-连接器约 27.6 MiB，安装文件约 65.1 MiB；系统已存在的 Node 不重复打包。实际数值以该版本 SHA256SUMS 和构建报告为准。
+连接器的宿主进程是 `BewlyDownloadHost.exe`（Rust，约 3.6 MB），托盘是 `BewlyDownloadTray.exe`（C#，NativeAOT）。两者通过本机回环 RPC 通信，托盘只是客户端。MSIX 约 8.4 MiB，安装后约 40 MiB；上一代随包携带 aria2 与 FFmpeg 时为 27.6 MiB。
 
 ## 更新与验证范围
 
-浏览器扩展与连接器分别更新。0.44.6 的按需启动需要连接器 0.2.8，已有用户更新 MSIX 后重载扩展、刷新 B 站。缺 Node 环境的完整 UAC/MSI 安装交互仍需单独验收。播放优化的真实慢网/CDN 切换测试仍保留到后续。
+浏览器扩展与连接器分别更新。旧版 Node 连接器的任务与设置在首次启动时按需迁移，`downloads.sqlite` 沿用同一 schema，中断的任务可以继续。
+
+尚未完成的部分：内置 libav 合流、macOS/Linux 安装器、旧版 `.bilidownexport` 历史文件导入（目前会明确报错而不是导入一半）、缺 Node 环境的完整 UAC/MSI 交互验收、真实慢网/CDN 切换测试。
 
 本分支没有内置 AI 模型，也不会因为下载功能将视频上传到 AI 服务。

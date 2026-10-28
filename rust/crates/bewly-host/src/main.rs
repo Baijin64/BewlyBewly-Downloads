@@ -16,7 +16,7 @@ use std::sync::Arc;
 use bewly_proto::frame::{read_frame, write_frame};
 use serde_json::{json, Value};
 
-const VERSION: &str = "0.2.8";
+const VERSION: &str = "0.3.0";
 
 static LAST_SERVICE_PID: AtomicU32 = AtomicU32::new(0);
 static DISPATCHING: AtomicUsize = AtomicUsize::new(0);

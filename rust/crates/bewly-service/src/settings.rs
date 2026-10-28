@@ -7,7 +7,7 @@ use bewly_core::naming::utf16_len;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const VERSION: &str = "0.2.8";
+pub const VERSION: &str = "0.3.0";
 pub const PROTOCOL: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

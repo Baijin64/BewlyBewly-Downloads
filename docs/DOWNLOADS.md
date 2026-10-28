@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-0.44.6 / 助手 0.2.8 将下载服务改为按需启动：打开界面不启动 Node 服务，下载、入队或本地操作首次确认后唤起，完成后约 5 秒退出；Windows 手动启动默认常驻。最近记录与配置保留只读快照，轮询不会阻止退出。详见 [后台启动与退出](DOWNLOAD-LIFECYCLE.md)。
+0.44.7 / 助手 0.3.0 将下载服务改为按需启动：打开界面不启动下载服务，下载、入队或本地操作首次确认后唤起，完成后约 5 秒退出；Windows 手动启动默认常驻。最近记录与配置保留只读快照，轮询不会阻止退出。详见 [后台启动与退出](DOWNLOAD-LIFECYCLE.md)。
 
-当前个人维护测试版为扩展 **0.44.6**、助手 **0.2.8**（协议 2）。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。Chrome ZIP 为 `dist/BewlyBewly-Downloads-0.44.6-Chrome.zip`，另提供签名 CRX 和连接器 MSIX。安装步骤见 [安装说明](INSTALL-DOWNLOADS.md)。
+当前个人维护**预览版**为扩展 **0.44.7**、助手 **0.3.0**（协议 2）。助手已完成 Rust 重写：不再需要 Node.js，也不再随包携带 aria2 与 FFmpeg，分片下载、续传、镜像轮换与任务队列均由 Rust 实现。合流仍待内置 libav，目前需要本机 FFmpeg，详见 [安装说明](INSTALL-DOWNLOADS.md)。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。
 
 此前推荐加载、悬停预览和渲染优化保持，详情见 [加载优化与验证](LOADING-OPTIMIZATION.md)。离线观看继续采用下载 MP4 后使用系统播放器。
 
@@ -28,9 +28,9 @@
 
 0.2.4 修复首版新菜单实际弹出时右侧裁切的问题：菜单和各行按 DPI 明确分配尺寸，关闭默认文字列的自动收窄。诊断使用与实际托盘相同的菜单控件，本机 150% 下为 402×408 像素，9 个菜单项均处于客户区内。
 
-当前助手 0.2.8 的 49 项原生测试与实际 MSIX 验证通过，包括系统 Node、FFmpeg 转 MP3、aria2、按需退出、托盘和管道释放；升级前后 21 条任务和配置行保持一致。证据见 `dist/installed-runtime-0.2.8-verification.json` 与 `dist/on-demand-0.44.6/`。此前官方 Node MSI 下载、哈希及 Windows 签名验证通过；缺 Node 机器上的完整 UAC/MSI 交互仍需单独实测。
+助手 0.3.0 的 114 项 Rust 测试通过，覆盖命名与格式对拍、帧协议、`.aria2` 续传解析、SQLite/LevelDB 旧数据兼容、WBI 签名、分片下载与任务状态机；三个平台的 `cargo test` 与 Windows MSIX 打包在 CI 验证。上一代助手 0.2.8 的 49 项原生测试与实际 MSIX 验证记录保留在 `dist/installed-runtime-0.2.8-verification.json`。
 
-网页下载 UI 保留 0.44.0 的统一选择按钮与开关，以及 0.44.1 的进度条。此前 Edge 本地模拟页验证了浅色蓝、深色紫主题，以及下载列表暂停后保留 62% 并隐藏旧速度；未操作用户真实任务，证据见 `dist/download-progress-0.44.1-verification.json`。当前 0.44.6 的 111 项扩展测试、类型检查、ESLint 和生产构建通过，首次启动确认及取消后的队列行为已在模拟页验证。
+网页下载 UI 保留 0.44.0 的统一选择按钮与开关，以及 0.44.1 的进度条。此前 Edge 本地模拟页验证了浅色蓝、深色紫主题，以及下载列表暂停后保留 62% 并隐藏旧速度；未操作用户真实任务，证据见 `dist/download-progress-0.44.1-verification.json`。当前 0.44.7 的 111 项扩展测试、类型检查、ESLint 和生产构建通过，首次启动确认及取消后的队列行为已在模拟页验证。
 
 此前的最高音质、动态最高画质、命名预设、NFO 说明和默认合集选择继续保留。原生任务、用户设置及旧配置未修改或导入；实际播放优化开关不因 UI 更新而变化。慢网、实际 CDN 切换与重载恢复实测继续按用户决定延后。详见 `docs/DOWNLOAD-PARITY.md` 与 `dist/download-ui-0.44.0-verification.json`。
 
