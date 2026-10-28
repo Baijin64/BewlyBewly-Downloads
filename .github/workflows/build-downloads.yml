@@ -13,14 +13,36 @@ jobs:
   connector:
     name: Windows connector
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Run inside rust/ so rust-toolchain.toml applies; --manifest-path from the
+      # repository root silently falls back to the runner default toolchain.
       - name: Rust tests
-        run: cargo test --workspace --manifest-path rust/Cargo.toml
+        working-directory: rust
+        run: cargo test --workspace
+      - name: Build release host
+        working-directory: rust
+        run: cargo build --release -p bewly-host
       - name: Stage helper
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -StageOnly
+      - name: Verify staged layout
+        shell: pwsh
+        run: |
+          $stage = 'dist/helper-msix'
+          $hostExe = Join-Path $stage 'BewlyDownloadHost.exe'
+          $trayExe = Join-Path $stage 'BewlyDownloadTray.exe'
+          foreach ($file in @($hostExe, $trayExe)) {
+            if (-not (Test-Path -LiteralPath $file)) { throw "missing $file" }
+            $size = (Get-Item -LiteralPath $file).Length
+            Write-Output ("{0}: {1:N0} bytes" -f (Split-Path -Leaf $file), $size)
+            if ($size -lt 200000) { throw "$file looks like a stub ($size bytes)" }
+          }
+          # An unknown argument prints usage and exits 2; anything else means the
+          # staged binary cannot start at all.
+          & $hostExe --selftest | Out-Null
+          if ($LASTEXITCODE -ne 2) { throw "host smoke test returned $LASTEXITCODE" }
       - name: Build MSIX
         shell: pwsh
         run: |
@@ -31,6 +53,7 @@ jobs:
           $unsigned = $msix.FullName -replace '\.msix$', '-unsigned.msix'
           Move-Item -LiteralPath $msix.FullName -Destination $unsigned
           Write-Output "Unsigned MSIX: $unsigned"
+          Write-Output ("size: {0:N1} MiB" -f ((Get-Item -LiteralPath $unsigned).Length / 1MB))
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-connector-unsigned
@@ -46,25 +69,27 @@ jobs:
         include:
           - target: linux-x64
             os: ubuntu-24.04
+          # macos-13 was retired and leaves the job queued forever; the Intel
+          # label is macos-15-intel.
           - target: darwin-arm64
             os: macos-14
           - target: darwin-x64
-            os: macos-13
+            os: macos-15-intel
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: rust
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Rust tests
-        run: cargo test --workspace --manifest-path rust/Cargo.toml
-      # macOS/Linux packaging still lives in the retired Node helper scripts (they
-      # stage launcher.sh/fetch-node.sh and the aria2/FFmpeg payloads), so this job
-      # validates the Rust build only until those packagers are rewritten.
+        run: cargo test --workspace
       - name: Build host binary
         run: |
-          cargo build --release --manifest-path rust/Cargo.toml
-          mkdir -p dist
-          cp rust/target/release/bewly-host "dist/bewly-host-${{ matrix.target }}"
-          chmod +x "dist/bewly-host-${{ matrix.target }}"
+          cargo build --release -p bewly-host
+          mkdir -p ../dist
+          cp target/release/bewly-host "../dist/bewly-host-${{ matrix.target }}"
+          chmod +x "../dist/bewly-host-${{ matrix.target }}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.target }}-host

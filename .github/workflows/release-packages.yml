@@ -1,0 +1,139 @@
+name: Release packages
+
+# release-it.yml only runs on the upstream repository, so this fork needs its own
+# publishing path. Everything here is built from source on the runner; the CRX is
+# intentionally absent because signing it needs the Windows certificate store.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.44.7
+        required: true
+        type: string
+      draft:
+        description: Keep the release as a draft for review
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  extension:
+    name: Chrome extension package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 9.5.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build extension
+        run: pnpm build
+      - name: Package Chrome ZIP
+        run: npx esno scripts/pack-chrome-zip.ts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chrome-extension
+          path: dist/*-Chrome.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows connector package
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build release host
+        working-directory: rust
+        run: cargo build --release -p bewly-host
+      - name: Build MSIX
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'MSIX build failed' }
+          $msix = Get-ChildItem -LiteralPath dist -Filter 'Bewly-DownloadHelper-*-x64.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'MSIX output not found' }
+          $unsigned = $msix.FullName -replace '\.msix$', '-unsigned.msix'
+          Move-Item -LiteralPath $msix.FullName -Destination $unsigned
+          Write-Output ("MSIX: {0:N1} MiB" -f ((Get-Item -LiteralPath $unsigned).Length / 1MB))
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-connector
+          path: dist/*-unsigned.msix
+          if-no-files-found: error
+          retention-days: 7
+
+  posix:
+    name: ${{ matrix.target }} host
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            os: ubuntu-24.04
+          - target: darwin-arm64
+            os: macos-14
+          - target: darwin-x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build host
+        run: |
+          cargo build --release -p bewly-host
+          mkdir -p ../dist
+          cp target/release/bewly-host "../dist/bewly-host-${{ matrix.target }}"
+          chmod +x "../dist/bewly-host-${{ matrix.target }}"
+          tar -czf "../dist/bewly-host-${{ matrix.target }}.tar.gz" -C ../dist "bewly-host-${{ matrix.target }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.target }}-host
+          path: dist/bewly-host-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    needs: [extension, windows, posix]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        working-directory: artifacts
+        run: |
+          ls -la
+          sha256sum ./* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload extension installer notes
+        run: cp docs/INSTALL-DOWNLOADS.md artifacts/ 2>/dev/null || true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists; refusing to overwrite" >&2
+            exit 1
+          fi
+          flags=(--title "$TAG" --notes "Built by the Release packages workflow from ${GITHUB_SHA}.")
+          if [ "$DRAFT" = "true" ]; then flags+=(--draft); fi
+          gh release create "$TAG" "${flags[@]}" artifacts/*

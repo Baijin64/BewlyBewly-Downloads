@@ -46,10 +46,13 @@ if (Test-Path -LiteralPath $releaseTarget) {
 }
 Copy-Item -LiteralPath $trayBinary -Destination (Join-Path $stage 'BewlyDownloadTray.exe') -Force
 
+# The package is useless without the host: the manifest declares it as the only
+# executable and the app alias points at it. Refuse to produce a broken MSIX.
 $rustHost = Join-Path $projectRoot 'rust\target\release\bewly-host.exe'
-if (Test-Path -LiteralPath $rustHost) {
-    Copy-Item -LiteralPath $rustHost -Destination (Join-Path $stage 'BewlyDownloadHost.exe') -Force
+if (-not (Test-Path -LiteralPath $rustHost)) {
+    throw "Rust host not found at $rustHost. Run 'cargo build --release -p bewly-host' inside rust/ first."
 }
+Copy-Item -LiteralPath $rustHost -Destination (Join-Path $stage 'BewlyDownloadHost.exe') -Force
 
 # MSIX tile assets: every size is rendered natively by TrayArtwork (vector metrics, never
 # downscaled from a master bitmap). Scale variants let Start menu and the Store listing pick
