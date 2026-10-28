@@ -487,7 +487,13 @@ mod tests {
         assert_eq!(settings["features"]["cover"], true);
         assert_eq!(settings["shutdown"], false);
         assert_eq!(settings["listenClipboard"], false);
+        // `Path::is_absolute` follows the host platform, exactly like
+        // `path.isAbsolute` in the Node helper: a legacy Windows directory only
+        // survives the migration on Windows.
+        #[cfg(windows)]
         assert!(settings["directory"].as_str().unwrap().contains("视频"));
+        #[cfg(not(windows))]
+        assert_eq!(settings["directory"], "");
     }
 
     #[test]
@@ -500,6 +506,16 @@ mod tests {
         );
     }
 
+    /// A path that `Path::is_absolute` accepts on the platform running the test;
+    /// the legacy export stores whatever the old client saw.
+    fn legacy_media_path() -> &'static str {
+        if cfg!(windows) {
+            "C:\\Downloads"
+        } else {
+            "/home/user/Downloads"
+        }
+    }
+
     #[test]
     fn round_trips_bilidownexport_content() {
         let original = json!({
@@ -509,7 +525,7 @@ mod tests {
                     "bv": "BV17x411w7KC",
                     "title": "视频😀",
                     "pic": "http://i0.hdslb.com/bfs/archive/fixture.jpg@240w",
-                    "path": "C:\\Downloads",
+                    "path": legacy_media_path(),
                     "downDate": "2024-11-07"
                 }
             ]

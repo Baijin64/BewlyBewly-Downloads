@@ -1,6 +1,7 @@
 //! Single binary with several entry points:
 //!   `--service`  run the loopback RPC service
 //!   `--start-service` spawn a detached service and print `{ "pid": n }`
+//!   `--version`  print the helper version
 //!   `--register` write native messaging host manifests and register with browsers
 //!   `--unregister` remove native messaging host manifests and browser registrations
 //!   `chrome-extension://…` native messaging host on stdio
@@ -594,6 +595,10 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        return;
+    }
+    if first == "--version" {
+        println!("bewly-host {VERSION}");
         return;
     }
     if first == "--register" || first.is_empty() {
