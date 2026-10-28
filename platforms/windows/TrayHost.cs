@@ -8,15 +8,16 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 public sealed class TrayHost : ApplicationContext
 {
     [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
+    [DllImport("kernel32.dll")] static extern bool AttachConsole(int dwProcessId);
     readonly string data;
     readonly NotifyIcon icon;
     readonly System.Windows.Forms.Timer timer;
@@ -34,6 +35,17 @@ public sealed class TrayHost : ApplicationContext
     [STAThread]
     public static int Main(string[] args)
     {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--tray-preview")
+            {
+                AttachConsole(-1);
+                string previewDir = (i + 1 < args.Length) ? args[i + 1] : Path.Combine(Path.GetTempPath(), "bewly-preview");
+                var diagnostics = DesktopUi.ExportPreviews(Path.GetFullPath(previewDir));
+                Console.WriteLine(DesktopUi.ToJson(diagnostics));
+                return 0;
+            }
+        }
         string data = null;
         for (int i = 0; i < args.Length; i++)
         {
@@ -103,11 +115,18 @@ public sealed class TrayHost : ApplicationContext
         if (action == "exit" && MessageBox.Show("将停止本地下载并保留进度，下次打开可恢复。", "退出 Bewly 下载助手", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
         Action(action);
     }
-    Dictionary<string, object> Rpc(string method, object parameters)
+    JsonElement Rpc(string method, KeyValuePair<string, string>[] parameters)
     {
-        var json = new JavaScriptSerializer();
-        var descriptor = json.Deserialize<Dictionary<string, object>>(File.ReadAllText(Path.Combine(data, "connection.json")));
-        int port = Convert.ToInt32(descriptor["port"]);
+        string descriptorPath = Path.Combine(data, "connection.json");
+        if (!File.Exists(descriptorPath)) throw new IOException("连接文件不存在: " + descriptorPath);
+        int port;
+        string token = "";
+        using (var connectionDoc = JsonDocument.Parse(File.ReadAllText(descriptorPath)))
+        {
+            var root = connectionDoc.RootElement;
+            port = root.GetProperty("port").GetInt32();
+            if (root.TryGetProperty("token", out var tok)) token = tok.GetString() ?? "";
+        }
         if (port < 1 || port > 65535) throw new IOException("无效服务端口");
         var request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + port + "/rpc");
         request.Method = "POST";
@@ -116,16 +135,48 @@ public sealed class TrayHost : ApplicationContext
         request.Timeout = method == "clipboardVideo" ? 30000 : 5000;
         request.ReadWriteTimeout = request.Timeout;
         request.ContentType = "application/json";
-        request.Headers["Authorization"] = "Bearer " + Convert.ToString(descriptor["token"]);
-        byte[] bytes = Encoding.UTF8.GetBytes(json.Serialize(new { method = method, @params = parameters }));
+        if (!string.IsNullOrEmpty(token)) request.Headers["Authorization"] = "Bearer " + token;
+
+        byte[] bytes;
+        using (var ms = new MemoryStream())
+        {
+            using (var writer = new Utf8JsonWriter(ms))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("method", method);
+                writer.WriteStartObject("params");
+                if (parameters != null)
+                {
+                    foreach (var pair in parameters)
+                    {
+                        writer.WriteString(pair.Key, pair.Value);
+                    }
+                }
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+            }
+            bytes = ms.ToArray();
+        }
+
         request.ContentLength = bytes.Length;
         using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
         using (var response = request.GetResponse())
         using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
         {
-            var reply = json.Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
-            if (!Convert.ToBoolean(reply["ok"])) throw new IOException(Convert.ToString(reply["error"]));
-            return reply["result"] as Dictionary<string, object> ?? new Dictionary<string, object>();
+            using (var replyDoc = JsonDocument.Parse(reader.ReadToEnd()))
+            {
+                var reply = replyDoc.RootElement;
+                if (reply.TryGetProperty("ok", out var okElem) && !okElem.GetBoolean())
+                {
+                    string err = reply.TryGetProperty("error", out var errElem) ? (errElem.GetString() ?? "未知错误") : "未知错误";
+                    throw new IOException(err);
+                }
+                if (reply.TryGetProperty("result", out var resultElem))
+                {
+                    return resultElem.Clone();
+                }
+                return default;
+            }
         }
     }
     async void Action(string action)
@@ -134,7 +185,7 @@ public sealed class TrayHost : ApplicationContext
         actionBusy = true;
         startItem.Enabled = pauseItem.Enabled = cancelItem.Enabled = false;
         try {
-            await Task.Run(() => Rpc("desktopAction", new { action = action }));
+            await Task.Run(() => Rpc("desktopAction", new[] { new KeyValuePair<string, string>("action", action) }));
             if (action == "exit") ExitThread();
         }
         catch (Exception error) { if (!closing) icon.ShowBalloonTip(4000, "Bewly 下载助手", error.Message, ToolTipIcon.Warning); }
@@ -146,31 +197,36 @@ public sealed class TrayHost : ApplicationContext
         polling = true;
         try
         {
-            var result = await Task.Run(() => Rpc("desktopState", new { }));
-            if (result.ContainsKey("exiting") && Convert.ToBoolean(result["exiting"])) { ExitThread(); return; }
-            failures = 0;
-            int pending = Convert.ToInt32(result["pending"]), active = Convert.ToInt32(result["active"]);
-            status.Detail = (result.ContainsKey("mode") && Convert.ToString(result["mode"]) == "on-demand" ? "按需 · " : "常驻 · ") + "待下载 " + pending + " · 下载中 " + active;
-            status.Invalidate();
-            startItem.Enabled = pending > 0 && !actionBusy;
-            pauseItem.Enabled = active > 0 && !actionBusy;
-            icon.Text = "Bewly 下载助手 · 待下载 " + pending + " · 进行中 " + active;
-            icon.Visible = Convert.ToBoolean(result["tray"]);
-            int completed = Convert.ToInt32(result["completed"]);
-            if (completionCount >= 0 && completed > completionCount && Convert.ToBoolean(result["soundTip"]))
+            var result = await Task.Run(() => Rpc("desktopState", null));
+            if (result.ValueKind == JsonValueKind.Object)
             {
-                SystemSounds.Asterisk.Play();
-                icon.ShowBalloonTip(3000, "Bewly 下载助手", "下载任务已完成", ToolTipIcon.Info);
+                if (result.TryGetProperty("exiting", out var exiting) && exiting.GetBoolean()) { ExitThread(); return; }
+                failures = 0;
+                int pending = result.TryGetProperty("pending", out var pElem) ? pElem.GetInt32() : 0;
+                int active = result.TryGetProperty("active", out var aElem) ? aElem.GetInt32() : 0;
+                string mode = result.TryGetProperty("mode", out var mElem) ? (mElem.GetString() ?? "") : "";
+                status.Detail = (mode == "on-demand" ? "按需 · " : "常驻 · ") + "待下载 " + pending + " · 下载中 " + active;
+                status.Invalidate();
+                startItem.Enabled = pending > 0 && !actionBusy;
+                pauseItem.Enabled = active > 0 && !actionBusy;
+                icon.Text = "Bewly 下载助手 · 待下载 " + pending + " · 进行中 " + active;
+                if (result.TryGetProperty("tray", out var tElem)) icon.Visible = tElem.GetBoolean();
+                int completed = result.TryGetProperty("completed", out var cElem) ? cElem.GetInt32() : 0;
+                if (completionCount >= 0 && completed > completionCount && result.TryGetProperty("soundTip", out var sElem) && sElem.GetBoolean())
+                {
+                    SystemSounds.Asterisk.Play();
+                    icon.ShowBalloonTip(3000, "Bewly 下载助手", "下载任务已完成", ToolTipIcon.Info);
+                }
+                completionCount = completed;
+                double due = result.TryGetProperty("shutdownDue", out var dueElem) ? dueElem.GetDouble() : 0;
+                cancelItem.Enabled = due > 0 && !actionBusy;
+                if (due > 0) ShowCountdown(due);
+                else if (countdown != null) { countdown.Close(); countdown.Dispose(); countdown = null; }
+                bool enabled = result.TryGetProperty("listenClipboard", out var lElem) && lElem.GetBoolean();
+                if (enabled && !listenClipboard) clipboardSequence = GetClipboardSequenceNumber();
+                listenClipboard = enabled;
+                if (enabled) CheckClipboard();
             }
-            completionCount = completed;
-            double due = Convert.ToDouble(result["shutdownDue"]);
-            cancelItem.Enabled = due > 0 && !actionBusy;
-            if (due > 0) ShowCountdown(due);
-            else if (countdown != null) { countdown.Close(); countdown.Dispose(); countdown = null; }
-            bool enabled = Convert.ToBoolean(result["listenClipboard"]);
-            if (enabled && !listenClipboard) clipboardSequence = GetClipboardSequenceNumber();
-            listenClipboard = enabled;
-            if (enabled) CheckClipboard();
         }
         catch { if (++failures >= 5) ExitThread(); }
         finally { polling = false; }
@@ -206,7 +262,7 @@ public sealed class TrayHost : ApplicationContext
             using (var sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(candidate)));
             if (hash == clipboardHash) return;
             clipboardHash = hash;
-            await Task.Run(() => Rpc("clipboardVideo", new { video = candidate }));
+            await Task.Run(() => Rpc("clipboardVideo", new[] { new KeyValuePair<string, string>("video", candidate) }));
             icon.ShowBalloonTip(4000, "Bewly 下载助手", "剪贴板视频已加入待下载，打开下载器可开始。", ToolTipIcon.Info);
         }
         catch (Exception error) { icon.ShowBalloonTip(4000, "剪贴板视频未加入", error.Message, ToolTipIcon.Warning); }

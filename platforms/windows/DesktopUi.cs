@@ -5,11 +5,28 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Web.Script.Serialization;
+using System.Text;
+using System.Text.Json;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
+#if NETFRAMEWORK
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
+#endif
+
+public sealed class DesktopUiDiagnostics
+{
+    public bool perMonitorV2 { get; set; }
+    public uint systemDpi { get; set; }
+    public int controlDpi { get; set; }
+    public float renderDpi { get; set; }
+    public bool darkApps { get; set; }
+    public bool highContrast { get; set; }
+    public int menuWidth { get; set; }
+    public int menuHeight { get; set; }
+    public bool allItemsFit { get; set; }
+    public int menuItemCount { get; set; }
+}
 
 public static class DesktopUi
 {
@@ -33,7 +50,7 @@ public static class DesktopUi
         try { using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")) return key != null && Convert.ToInt32(key.GetValue("AppsUseLightTheme", 1)) == 0; }
         catch { return false; }
     }
-    public static object Diagnostics()
+    public static DesktopUiDiagnostics Diagnostics()
     {
         Initialize();
         using (var menu = new TrayMenu()) using (var graphics = Graphics.FromHwnd(menu.Handle))
@@ -41,10 +58,21 @@ public static class DesktopUi
             menu.PrepareLayout();
             bool itemsFit = true;
             foreach (ToolStripItem item in menu.Items) if (!menu.ClientRectangle.Contains(item.Bounds)) itemsFit = false;
-            return new { perMonitorV2 = AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), new IntPtr(-4)), systemDpi = GetDpiForSystem(), controlDpi = menu.DeviceDpi, renderDpi = graphics.DpiX, darkApps = DarkApps(), highContrast = SystemInformation.HighContrast, menuWidth = menu.Width, menuHeight = menu.Height, allItemsFit = itemsFit, menuItemCount = menu.Items.Count };
+            return new DesktopUiDiagnostics {
+                perMonitorV2 = AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), new IntPtr(-4)),
+                systemDpi = GetDpiForSystem(),
+                controlDpi = menu.DeviceDpi,
+                renderDpi = graphics.DpiX,
+                darkApps = DarkApps(),
+                highContrast = SystemInformation.HighContrast,
+                menuWidth = menu.Width,
+                menuHeight = menu.Height,
+                allItemsFit = itemsFit,
+                menuItemCount = menu.Items.Count
+            };
         }
     }
-    public static object ExportPreviews(string directory)
+    public static DesktopUiDiagnostics ExportPreviews(string directory)
     {
         Initialize();
         if (!Path.IsPathRooted(directory)) throw new ArgumentException("预览目录需要绝对路径");
@@ -53,9 +81,31 @@ public static class DesktopUi
             string file = Path.Combine(directory, "tray-" + dpi + "-" + (dark ? "dark" : "light") + ".png");
             using (var renderer = new TrayMenuRenderer(dark))
             using (var bitmap = renderer.Preview(dpi))
-            using (var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write)) bitmap.Save(stream, ImageFormat.Png);
+            using (var stream = new FileStream(file, FileMode.Create, FileAccess.Write)) bitmap.Save(stream, ImageFormat.Png);
         }
         return Diagnostics();
+    }
+    public static string ToJson(DesktopUiDiagnostics d)
+    {
+        using (var ms = new MemoryStream())
+        {
+            using (var writer = new Utf8JsonWriter(ms))
+            {
+                writer.WriteStartObject();
+                writer.WriteBoolean("perMonitorV2", d.perMonitorV2);
+                writer.WriteNumber("systemDpi", d.systemDpi);
+                writer.WriteNumber("controlDpi", d.controlDpi);
+                writer.WriteNumber("renderDpi", d.renderDpi);
+                writer.WriteBoolean("darkApps", d.darkApps);
+                writer.WriteBoolean("highContrast", d.highContrast);
+                writer.WriteNumber("menuWidth", d.menuWidth);
+                writer.WriteNumber("menuHeight", d.menuHeight);
+                writer.WriteBoolean("allItemsFit", d.allItemsFit);
+                writer.WriteNumber("menuItemCount", d.menuItemCount);
+                writer.WriteEndObject();
+            }
+            return Encoding.UTF8.GetString(ms.ToArray());
+        }
     }
 }
 

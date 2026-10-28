@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PublishAot>true</PublishAot>
+    <_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
+    <StripSymbols>true</StripSymbols>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ApplicationManifest>NativeHost.manifest</ApplicationManifest>
+    <AssemblyName>BewlyDownloadTray</AssemblyName>
+    <RootNamespace>BewlyDownloadTray</RootNamespace>
+    <NoWarn>$(NoWarn);SYSLIB0014;IL2026;IL3050</NoWarn>
+  </PropertyGroup>
+
+</Project>

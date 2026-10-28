@@ -26,7 +26,9 @@ foreach ($binary in @('aria2c.exe','ffmpeg.exe')) {
 $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
 $sdk = Get-ChildItem -LiteralPath $sdkRoot -Directory | Where-Object { $_.Name -match '^10\.0\.\d+\.0$' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'x64\makeappx.exe')) } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
 if (-not $sdk) { throw 'Windows SDK (MakeAppx) is required.' }
-$compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+$dotnetCommand = Get-Command dotnet.exe -ErrorAction SilentlyContinue
+if (-not $dotnetCommand) { throw '.NET SDK (dotnet) is required.' }
+$dotnetBinary = $dotnetCommand.Source
 $nodeBinary = (Get-Command node.exe).Source
 $nodeVersion = (& $nodeBinary -p 'process.versions.node').Trim()
 if ([version]$nodeVersion -lt [version]'24.0.0') { throw 'Node.js 24 or later is required for development.' }
@@ -40,30 +42,36 @@ if (Test-Path -LiteralPath $stagedRuntime) {
     Remove-Item -LiteralPath $stagedRuntime -Recurse -Force
 }
 foreach ($binary in @('aria2c.exe','ffmpeg.exe')) { Copy-Item -LiteralPath (Join-Path $BinDirectory $binary) -Destination (Join-Path $stage "bin\$binary") }
-Get-ChildItem -LiteralPath (Join-Path $projectRoot 'native') -File -Filter '*.mjs' | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage $_.Name) }
-foreach ($folder in @('platform','runtime')) {
-    Copy-Item -LiteralPath (Join-Path $projectRoot "native\$folder") -Destination (Join-Path $stage $folder) -Recurse -Force
+if (Test-Path -LiteralPath (Join-Path $projectRoot 'native')) {
+    Get-ChildItem -LiteralPath (Join-Path $projectRoot 'native') -File -Filter '*.mjs' | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage $_.Name) }
+    foreach ($folder in @('platform','runtime')) {
+        $folderPath = Join-Path $projectRoot "native\$folder"
+        if (Test-Path -LiteralPath $folderPath) {
+            Copy-Item -LiteralPath $folderPath -Destination (Join-Path $stage $folder) -Recurse -Force
+        }
+    }
 }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'platforms\identity.json') -Destination (Join-Path $stage 'identity.json')
 $nativeModules = Join-Path $projectRoot 'native\node_modules'
-if (-not (Test-Path -LiteralPath (Join-Path $nativeModules 'classic-level\package.json'))) { throw 'Run npm ci --prefix native before building the helper.' }
-$stagedModules = [System.IO.Path]::GetFullPath((Join-Path $stage 'node_modules'))
-$expectedModules = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'dist\helper-msix\node_modules'))
-if ($stagedModules -ne $expectedModules) { throw 'Unexpected helper dependency staging path.' }
-if (Test-Path -LiteralPath $stagedModules) {
-    if ((Get-Item -LiteralPath $stagedModules).Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'Refusing to clear a linked staging directory.' }
-    Remove-Item -LiteralPath $stagedModules -Recurse -Force
-}
-Get-ChildItem -LiteralPath $nativeModules -Recurse -File | Where-Object {
-    $relative = $_.FullName.Substring($nativeModules.Length).TrimStart('\').Replace('\','/')
-    $keep = $relative -notmatch '(^|/)\.(vite|cache|bin)(/|$)' -and $relative -notmatch '(^|/)(test|tests|benchmark|benchmarks|example|examples|deps|src|types)(/|$)' -and $relative -notmatch '\.(cc|cpp|h|gyp|gypi|map|ts)$'
-    if ($relative -match '/prebuilds/') { $keep = $relative -match '/prebuilds/win32-x64/[^/]+\.node$' }
-    $keep
-} | ForEach-Object {
-    $relative = $_.FullName.Substring($nativeModules.Length).TrimStart('\')
-    $destination = Join-Path (Join-Path $stage 'node_modules') $relative
-    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-    Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+if (Test-Path -LiteralPath $nativeModules) {
+    $stagedModules = [System.IO.Path]::GetFullPath((Join-Path $stage 'node_modules'))
+    $expectedModules = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'dist\helper-msix\node_modules'))
+    if ($stagedModules -ne $expectedModules) { throw 'Unexpected helper dependency staging path.' }
+    if (Test-Path -LiteralPath $stagedModules) {
+        if ((Get-Item -LiteralPath $stagedModules).Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'Refusing to clear a linked staging directory.' }
+        Remove-Item -LiteralPath $stagedModules -Recurse -Force
+    }
+    Get-ChildItem -LiteralPath $nativeModules -Recurse -File | Where-Object {
+        $relative = $_.FullName.Substring($nativeModules.Length).TrimStart('\').Replace('\','/')
+        $keep = $relative -notmatch '(^|/)\.(vite|cache|bin)(/|$)' -and $relative -notmatch '(^|/)(test|tests|benchmark|benchmarks|example|examples|deps|src|types)(/|$)' -and $relative -notmatch '\.(cc|cpp|h|gyp|gypi|map|ts)$'
+        if ($relative -match '/prebuilds/') { $keep = $relative -match '/prebuilds/win32-x64/[^/]+\.node$' }
+        $keep
+    } | ForEach-Object {
+        $relative = $_.FullName.Substring($nativeModules.Length).TrimStart('\')
+        $destination = Join-Path (Join-Path $stage 'node_modules') $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+    }
 }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'platforms\windows\AppxManifest.xml') -Destination (Join-Path $stage 'AppxManifest.xml')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $stage 'licenses\BewlyBewly-MIT.txt')
@@ -83,10 +91,25 @@ BewlyBewly MIT and retained dependency license notices are included in this dire
 '@ | Set-Content -LiteralPath (Join-Path $stage 'licenses\THIRD-PARTY.txt') -Encoding utf8
 Add-Type -Path (Join-Path $projectRoot 'platforms\windows\TrayArtwork.cs') -ReferencedAssemblies System.Drawing
 [TrayArtwork]::WriteIcon((Join-Path $stage 'Assets\BewlyDownload.ico'))
-Copy-Item -LiteralPath (Join-Path $projectRoot 'native\windows\NativeHost.config') -Destination (Join-Path $stage 'BewlyDownloadHost.exe.config')
-$desktopSources = @('NativeHost.cs','TrayHost.cs','TrayArtwork.cs','DesktopUi.cs','NodeRuntime.cs','NodeInstaller.cs','BundledTool.cs') | ForEach-Object { Join-Path $projectRoot "native\windows\$_" }
-& $compiler /nologo /target:winexe /platform:x64 /codepage:65001 /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Security.dll "/win32manifest:$projectRoot\platforms\windows\NativeHost.manifest" "/win32icon:$stage\Assets\BewlyDownload.ico" "/out:$stage\BewlyDownloadHost.exe" $desktopSources
-if ($LASTEXITCODE -ne 0) { throw 'Native host compilation failed.' }
+
+# Build Native AOT BewlyDownloadTray
+$trayProject = Join-Path $projectRoot 'platforms\windows\BewlyDownloadTray.csproj'
+& $dotnetBinary publish $trayProject -c Release -r win-x64
+if ($LASTEXITCODE -ne 0) { throw 'BewlyDownloadTray Native AOT compilation failed.' }
+$publishExe = Get-ChildItem (Join-Path $projectRoot 'platforms\windows\bin\Release') -Recurse -Filter 'BewlyDownloadTray.exe' | Where-Object { $_.DirectoryName -like '*publish*' } | Select-Object -First 1
+if (-not $publishExe) { throw 'Published BewlyDownloadTray.exe not found.' }
+$trayBinary = $publishExe.FullName
+$releaseTarget = Join-Path $projectRoot 'rust\target\release'
+if (Test-Path -LiteralPath $releaseTarget) {
+    Copy-Item -LiteralPath $trayBinary -Destination (Join-Path $releaseTarget 'BewlyDownloadTray.exe') -Force
+}
+Copy-Item -LiteralPath $trayBinary -Destination (Join-Path $stage 'BewlyDownloadTray.exe') -Force
+
+$rustHost = Join-Path $projectRoot 'rust\target\release\bewly-host.exe'
+if (Test-Path -LiteralPath $rustHost) {
+    Copy-Item -LiteralPath $rustHost -Destination (Join-Path $stage 'BewlyDownloadHost.exe') -Force
+}
+
 # MSIX tile assets: every size is rendered natively by TrayArtwork (vector metrics, never
 # downscaled from a master bitmap). Scale variants let Start menu and the Store listing pick
 # a crisp asset at 100%-400% DPI instead of upscaling the 150 px base image.

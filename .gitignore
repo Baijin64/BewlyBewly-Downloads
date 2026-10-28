@@ -29,3 +29,8 @@ extension-safari-macos/
 connection.json
 *.msix
 *.msixbundle
+
+[Bb]in/
+[Oo]bj/
+.cargo/config.toml
+rust/.cargo/config.toml
