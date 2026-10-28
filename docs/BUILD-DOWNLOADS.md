@@ -29,7 +29,7 @@ pnpm exec vitest run
 $env:NODE_ENV = 'production'
 $env:BEWLY_BUILD_DIR = 'dist/release-extension'
 pnpm exec run-s build:web build:prepare build:js build:bg
-node scripts/pack-chrome-zip.mjs dist/release-extension
+npx esno scripts/pack-chrome-zip.ts dist/release-extension
 ```
 
 ## Windows 连接器
@@ -52,7 +52,7 @@ node --test native/tests/*.test.mjs
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -BinDirectory dist/toolchain/bin -DevSign
-node scripts/pack-crx.mjs --source dist/release-extension --name BewlyBewly-Downloads-local
+npx esno scripts/pack-crx.ts --source dist/release-extension --name BewlyBewly-Downloads-local
 ```
 
 不上传 PFX/PEM/私钥、会话、数据库、下载文件或本机调试报告。原生下载任务保存在 LOCALAPPDATA/BewlyDownload，构建和测试使用各自的隔离目录。

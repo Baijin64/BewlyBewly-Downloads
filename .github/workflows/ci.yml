@@ -34,7 +34,7 @@ jobs:
       - name: Build extension
         run: pnpm build
       - name: Package Chrome ZIP
-        run: node scripts/pack-chrome-zip.mjs
+        run: npx esno scripts/pack-chrome-zip.ts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chrome-extension

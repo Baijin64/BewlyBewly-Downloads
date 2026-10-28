@@ -49,9 +49,9 @@ sh install.sh --systemd                      # 可选：systemd --user 常驻
 ## 构建
 
 ```sh
-node scripts/build-helper.mjs --target win32-x64     # 转调 build-helper.ps1（需 Windows SDK）
-node scripts/build-helper.mjs --target linux-x64     # 需 --bin 指定 aria2c/ffmpeg
-node scripts/build-helper.mjs --target darwin-arm64  # 必须在 macOS 上运行（swiftc/codesign）
+npx esno scripts/build-helper.ts --target win32-x64     # 转调 build-helper.ps1（需 Windows SDK）
+npx esno scripts/build-helper.ts --target linux-x64     # 需 --bin 指定 aria2c/ffmpeg
+npx esno scripts/build-helper.ts --target darwin-arm64  # 必须在 macOS 上运行（swiftc/codesign）
 ```
 
 暂存目录已存在时构建会拒绝覆盖，需显式加 `--clean` 或使用 `--out <dir>`。

@@ -84,7 +84,7 @@ jobs:
       - name: Verify media tools
         run: node scripts/verify-toolchain.mjs --platform ${{ matrix.target }} dist/toolchain/bin
       - name: Build helper
-        run: node scripts/build-helper.mjs --target ${{ matrix.target }} --bin dist/toolchain/bin
+        run: npx esno scripts/build-helper.ts --target ${{ matrix.target }} --bin dist/toolchain/bin
       - name: Test native helper
         env:
           BEWLY_NATIVE_TEST_ROOT: dist/${{ matrix.stage }}

@@ -1,0 +1,27 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ESNext"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "types": [
+      "node"
+    ],
+    "noUnusedLocals": false,
+    "noEmit": true
+  },
+  "include": [
+    "build-helper.ts",
+    "pack-crx.ts",
+    "pack-chrome-zip.ts",
+    "update-extension-files.ts",
+    "verify-download-live.ts",
+    "legacy-modules.d.ts"
+  ],
+  "exclude": [
+    "./research"
+  ]
+}
