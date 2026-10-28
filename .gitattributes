@@ -17,3 +17,4 @@
 
 # LevelDB fixtures must keep their exact bytes
 rust/crates/bewly-store/tests/fixtures/localstorage-leveldb/** -text
+rust/crates/bewly-store/tests/fixtures/*.sqlite binary

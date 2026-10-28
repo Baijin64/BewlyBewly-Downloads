@@ -5,9 +5,9 @@
 //! `health` and `queryTasks` deliberately do not touch the lease, otherwise a
 //! polling UI would keep the process alive forever.
 
+use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Mutex;
-use serde_json::Value;
 
 pub const ON_DEMAND_GRACE_MS: i64 = 5000;
 
@@ -244,7 +244,10 @@ mod tests {
         assert_eq!(policy.completed, 1);
 
         let completed = serde_json::json!([{ "id": "one", "status": "completed" }]);
-        assert_eq!(policy.evaluate(completed.as_array().unwrap(), false, 100), 0);
+        assert_eq!(
+            policy.evaluate(completed.as_array().unwrap(), false, 100),
+            0
+        );
         assert_eq!(
             policy.evaluate(completed.as_array().unwrap(), true, 100),
             30100

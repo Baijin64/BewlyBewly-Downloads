@@ -677,10 +677,7 @@ mod tests {
         assert_eq!(res2, 1600000000);
 
         let err3 = fetch_join_time("").unwrap_err();
-        assert_eq!(
-            err3,
-            "官方接口当前未提供该账号的入站时间，请确认已登录"
-        );
+        assert_eq!(err3, "官方接口当前未提供该账号的入站时间，请确认已登录");
 
         let err4 = fetch_join_time("").unwrap_err();
         assert_eq!(err4, "B 站返回 -101：账号未登录");

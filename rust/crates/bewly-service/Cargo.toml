@@ -27,5 +27,7 @@ time = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 
-[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+# Windows/macOS only: on Linux rfd pulls GTK and Wayland, and the picker falls
+# back to zenity/kdialog there instead.
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 rfd = "0.15"

@@ -194,8 +194,8 @@ fn normalize_and_validate_url(url_str: &str) -> Result<String, String> {
     } else {
         url_str.to_string()
     };
-    let mut parsed = url::Url::parse(&normalized)
-        .map_err(|_| "视频接口返回了不受支持的媒体地址".to_string())?;
+    let mut parsed =
+        url::Url::parse(&normalized).map_err(|_| "视频接口返回了不受支持的媒体地址".to_string())?;
 
     let host = parsed.host_str().unwrap_or("").to_string();
     if host.is_empty() {
@@ -749,7 +749,10 @@ mod tests {
         let res = validate_prepared(&valid_payload).unwrap();
         let video_urls = res["video"]["urls"].as_array().unwrap();
         assert_eq!(video_urls[0], "https://xy.bilivideo.com/video.m4s");
-        assert_eq!(video_urls[1], "https://upos-sz-mirror08c.akamaized.net/upgcxcode/1.m4s");
+        assert_eq!(
+            video_urls[1],
+            "https://upos-sz-mirror08c.akamaized.net/upgcxcode/1.m4s"
+        );
 
         let audio_urls = res["audio"]["urls"].as_array().unwrap();
         assert_eq!(audio_urls[0], "http://127.0.0.1:8080/audio.m4s");

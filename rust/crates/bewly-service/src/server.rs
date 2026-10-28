@@ -138,7 +138,8 @@ fn open_system_target(action: &str, target: &Path) -> Result<(), String> {
             c.args(["/c", "start", "", &target_str]);
             c
         };
-        cmd.spawn().map_err(|error| format!("无法打开目标: {error}"))?;
+        cmd.spawn()
+            .map_err(|error| format!("无法打开目标: {error}"))?;
     }
     #[cfg(target_os = "macos")]
     {
@@ -147,7 +148,8 @@ fn open_system_target(action: &str, target: &Path) -> Result<(), String> {
             cmd.arg("-R");
         }
         cmd.arg(target);
-        cmd.spawn().map_err(|error| format!("无法打开目标: {error}"))?;
+        cmd.spawn()
+            .map_err(|error| format!("无法打开目标: {error}"))?;
     }
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
@@ -158,7 +160,8 @@ fn open_system_target(action: &str, target: &Path) -> Result<(), String> {
         };
         let mut cmd = std::process::Command::new("xdg-open");
         cmd.arg(target_to_open);
-        cmd.spawn().map_err(|error| format!("无法打开目标: {error}"))?;
+        cmd.spawn()
+            .map_err(|error| format!("无法打开目标: {error}"))?;
     }
     Ok(())
 }
@@ -1267,8 +1270,7 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
                     housekeeping.save_snapshot();
                     let _ =
                         std::fs::remove_file(housekeeping.data_directory.join("connection.json"));
-                    let _ =
-                        std::fs::remove_file(housekeeping.data_directory.join("service.lock"));
+                    let _ = std::fs::remove_file(housekeeping.data_directory.join("service.lock"));
                     // Give the in-flight reply a moment to leave the socket.
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     std::process::exit(0);
@@ -1402,7 +1404,12 @@ mod tests {
         assert_eq!(ds["completed"], 5);
         assert_eq!(ds["shutdownDue"], 123456);
 
-        let res = dispatch(&state, "desktopAction", &json!({ "action": "cancelShutdown" })).unwrap();
+        let res = dispatch(
+            &state,
+            "desktopAction",
+            &json!({ "action": "cancelShutdown" }),
+        )
+        .unwrap();
         assert_eq!(res["cancelled"], true);
         assert_eq!(state.policy.lock().unwrap().due, 0);
     }
@@ -1421,7 +1428,12 @@ mod tests {
         let (_temp, state) = state();
         // Missing task returns error
         assert_eq!(
-            dispatch(&state, "taskAction", &json!({ "id": "none", "action": "edit" })).unwrap_err(),
+            dispatch(
+                &state,
+                "taskAction",
+                &json!({ "id": "none", "action": "edit" })
+            )
+            .unwrap_err(),
             "任务不存在"
         );
     }

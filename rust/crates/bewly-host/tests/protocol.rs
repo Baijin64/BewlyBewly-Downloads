@@ -768,12 +768,7 @@ fn extended_tools_and_rpc_features_work() {
     assert_eq!(cfg_dir["ok"], true);
 
     // Action "folder" without ID succeeds with settings directory
-    let folder_res = call(
-        port,
-        &token,
-        "taskFile",
-        json!({ "action": "folder" }),
-    );
+    let folder_res = call(port, &token, "taskFile", json!({ "action": "folder" }));
     assert_eq!(folder_res["ok"], true, "{folder_res}");
     assert_eq!(folder_res["result"]["opened"], true);
 

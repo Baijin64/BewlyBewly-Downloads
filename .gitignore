@@ -34,3 +34,6 @@ connection.json
 [Oo]bj/
 .cargo/config.toml
 rust/.cargo/config.toml
+
+# Golden fixtures used by include_bytes! in Rust tests
+!rust/crates/bewly-store/tests/fixtures/*.sqlite

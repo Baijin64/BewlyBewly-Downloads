@@ -139,12 +139,15 @@ pub fn stream_from_prepared_video(video: &Value) -> Option<VideoStream> {
         .and_then(Value::as_u64)
         .or_else(|| video.get("codec").and_then(Value::as_u64))
         .or_else(|| {
-            video.get("codec").and_then(Value::as_str).and_then(|s| match s {
-                "avc" | "avc1" => Some(7),
-                "hevc" | "hev1" | "hvc1" => Some(12),
-                "av1" | "av01" => Some(13),
-                other => other.parse::<u64>().ok(),
-            })
+            video
+                .get("codec")
+                .and_then(Value::as_str)
+                .and_then(|s| match s {
+                    "avc" | "avc1" => Some(7),
+                    "hevc" | "hev1" | "hvc1" => Some(12),
+                    "av1" | "av01" => Some(13),
+                    other => other.parse::<u64>().ok(),
+                })
         })
         .unwrap_or(0) as u32;
     let codecs = video
@@ -153,11 +156,18 @@ pub fn stream_from_prepared_video(video: &Value) -> Option<VideoStream> {
         .or_else(|| video.get("codec").and_then(Value::as_str))
         .unwrap_or("")
         .to_string();
-    let bandwidth = video.get("bandwidth").and_then(Value::as_f64).unwrap_or(0.0);
+    let bandwidth = video
+        .get("bandwidth")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
     let urls: Vec<String> = video
         .get("urls")
         .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(|u| u.as_str().map(str::to_string)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|u| u.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     if quality == 0 && urls.is_empty() {
         return None;
@@ -182,11 +192,18 @@ pub fn stream_from_prepared_audio(audio: &Value) -> Option<AudioStream> {
         .or_else(|| audio.get("codec").and_then(Value::as_str))
         .unwrap_or("")
         .to_string();
-    let bandwidth = audio.get("bandwidth").and_then(Value::as_f64).unwrap_or(0.0);
+    let bandwidth = audio
+        .get("bandwidth")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
     let urls: Vec<String> = audio
         .get("urls")
         .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(|u| u.as_str().map(str::to_string)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|u| u.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     if id == 0 && urls.is_empty() {
         return None;
@@ -301,7 +318,11 @@ fn download_stream(
 }
 
 fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(), String> {
-    state.policy.lock().unwrap_or_else(|p| p.into_inner()).started(id);
+    state
+        .policy
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .started(id);
     let Some(mut task) = state.store().task(id).map_err(|error| error.to_string())? else {
         return Ok(());
     };
@@ -315,7 +336,11 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
             .task(id)
             .ok()
             .flatten()
-            .and_then(|t| t.get("status").and_then(Value::as_str).map(|s| s == "cancelled"))
+            .and_then(|t| {
+                t.get("status")
+                    .and_then(Value::as_str)
+                    .map(|s| s == "cancelled")
+            })
             .unwrap_or(false);
         if is_cancelled {
             update(state, task, json!({ "status": "cancelled", "speed": 0 }));
@@ -371,7 +396,11 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
     let expired = prepared_at > 0 && now_ms.saturating_sub(prepared_at) >= 20 * 60_000;
 
     if (need_video || need_audio) && (prepared.is_null() || (expired && has_cookie)) {
-        update(state, &mut task, json!({ "status": "resolving", "speed": 0 }));
+        update(
+            state,
+            &mut task,
+            json!({ "status": "resolving", "speed": 0 }),
+        );
         let bvid = task.get("bvid").and_then(Value::as_str).unwrap_or("");
         let cid = task.get("cid").and_then(Value::as_u64).unwrap_or(0);
         match crate::net::resolve(
@@ -878,7 +907,11 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
             "completedAt": tasks::service_now(),
         }),
     );
-    state.policy.lock().unwrap_or_else(|p| p.into_inner()).finished();
+    state
+        .policy
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .finished();
     state.save_snapshot();
     let _ = std::fs::remove_dir_all(&workdir);
     Ok(())
@@ -956,7 +989,10 @@ mod tests {
         });
         let view = tasks::view_of(&task, "D:/downloads");
         let (_dir, name) = output_location(&view, &streams).unwrap();
-        assert!(name.contains("1080P"), "expected 1080P in name, got: {name}");
+        assert!(
+            name.contains("1080P"),
+            "expected 1080P in name, got: {name}"
+        );
         assert!(name.contains("192K"), "expected 192K in name, got: {name}");
 
         // Contrast with default empty streams

@@ -1,9 +1,9 @@
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use jni::objects::{JClass, JString};
 use jni::sys::{jboolean, jstring};
 use jni::JNIEnv;
 use serde_json::json;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 

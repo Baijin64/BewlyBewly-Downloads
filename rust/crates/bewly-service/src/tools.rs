@@ -114,7 +114,11 @@ pub fn convert_job(store: &Store, input: &str) -> Result<Value, String> {
     }
 }
 
-pub fn export_history(store: &Store, target_directory: &Path, format_opt: Option<&str>) -> Result<PathBuf, String> {
+pub fn export_history(
+    store: &Store,
+    target_directory: &Path,
+    format_opt: Option<&str>,
+) -> Result<PathBuf, String> {
     if !target_directory.is_absolute() {
         return Err("请选择输出目录".into());
     }
@@ -180,9 +184,10 @@ pub fn export_history(store: &Store, target_directory: &Path, format_opt: Option
     let uuid_str = Uuid::new_v4().to_string();
 
     let (filename, content_bytes) = match format_opt {
-        Some("json") => {
-            (format!("bewly_history_{}-{}.json", date_prefix, &uuid_str[..8]), payload.into_bytes())
-        }
+        Some("json") => (
+            format!("bewly_history_{}-{}.json", date_prefix, &uuid_str[..8]),
+            payload.into_bytes(),
+        ),
         Some("csv") => {
             let mut csv = String::from("vid,uid,upname,title,bv,pic,path,downDate,type\n");
             for row in &downloaded {
@@ -210,11 +215,21 @@ pub fn export_history(store: &Store, target_directory: &Path, format_opt: Option
                     escape(&row["type"]),
                 ));
             }
-            (format!("bewly_history_{}-{}.csv", date_prefix, &uuid_str[..8]), csv.into_bytes())
+            (
+                format!("bewly_history_{}-{}.csv", date_prefix, &uuid_str[..8]),
+                csv.into_bytes(),
+            )
         }
         _ => {
             let encoded = crate::migration::encode_bilidownexport(&payload);
-            (format!("bewly_history_{}-{}.bilidownexport", date_prefix, &uuid_str[..8]), encoded.into_bytes())
+            (
+                format!(
+                    "bewly_history_{}-{}.bilidownexport",
+                    date_prefix,
+                    &uuid_str[..8]
+                ),
+                encoded.into_bytes(),
+            )
         }
     };
 
@@ -242,9 +257,8 @@ pub fn job_map(job: &Value) -> BTreeMap<String, Value> {
 }
 
 fn format_timestamp(ts: i64) -> Result<String, String> {
-    let offset = time::UtcOffset::current_local_offset().unwrap_or_else(|_| {
-        time::UtcOffset::from_hms(8, 0, 0).unwrap()
-    });
+    let offset = time::UtcOffset::current_local_offset()
+        .unwrap_or_else(|_| time::UtcOffset::from_hms(8, 0, 0).unwrap());
     let dt = time::OffsetDateTime::from_unix_timestamp(ts)
         .map_err(|e| format!("时间戳格式化失败：{e}"))?
         .to_offset(offset);
@@ -270,6 +284,105 @@ fn resolve_output_directory(params: &Value, default_directory: &str) -> Result<P
         return Err("请选择输出目录".into());
     }
     Ok(dir)
+}
+
+/// Native picker for Windows and macOS. `rfd` is only pulled in for these two
+/// targets: on Linux it drags GTK/Wayland into the build, and the original helper
+/// shelled out to zenity/kdialog there anyway.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn platform_pick(kind: &str, initial: Option<&str>) -> Result<Option<String>, String> {
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(path_str) = initial {
+        let path = Path::new(path_str);
+        if path.is_dir() {
+            dialog = dialog.set_directory(path);
+        }
+    }
+    match kind {
+        "audio" => {
+            dialog = dialog.add_filter(
+                "音频文件",
+                &["aac", "m4a", "m4s", "mp3", "flac", "mka", "eac3", "wav"],
+            );
+        }
+        "video" => {
+            dialog = dialog.add_filter("视频文件", &["m4s", "mp4", "mkv", "mov"]);
+        }
+        "cc" => {
+            dialog = dialog.add_filter("CC 字幕", &["json"]);
+        }
+        "srt" => {
+            dialog = dialog.add_filter("SRT 字幕", &["srt"]);
+        }
+        "legacy" => {
+            dialog = dialog.add_filter("Bilidown 历史", &["bilidownexport"]);
+        }
+        _ => {}
+    }
+    let chosen = if kind == "directory" {
+        dialog.pick_folder()
+    } else {
+        dialog.pick_file()
+    };
+    Ok(chosen.map(|path| path.to_string_lossy().into_owned()))
+}
+
+/// Zenity (GNOME) then kdialog (KDE), matching the tool the Node helper used.
+/// Exit code 1 means the user cancelled; anything else is a real failure.
+#[cfg(target_os = "linux")]
+fn platform_pick(kind: &str, initial: Option<&str>) -> Result<Option<String>, String> {
+    use std::process::Command;
+
+    let directory = kind == "directory";
+    let start = initial.unwrap_or("");
+    let attempts: [[&str; 2]; 2] = if directory {
+        [["zenity", "directory"], ["kdialog", "directory"]]
+    } else {
+        [["zenity", "file"], ["kdialog", "file"]]
+    };
+
+    for [tool, _] in attempts {
+        let mut command = Command::new(tool);
+        match (tool, directory) {
+            ("zenity", true) => {
+                command.args(["--file-selection", "--directory", "--title=选择文件夹"]);
+                if !start.is_empty() {
+                    command.arg(format!("--filename={start}/"));
+                }
+            }
+            ("zenity", false) => {
+                command.args(["--file-selection", "--title=选择文件"]);
+                if !start.is_empty() {
+                    command.arg(format!("--filename={start}/"));
+                }
+            }
+            ("kdialog", true) => {
+                command.args(["--getexistingdirectory", start]);
+            }
+            _ => {
+                command.args(["--getopenfilename", start]);
+            }
+        }
+        match command.output() {
+            Ok(output) => {
+                if output.status.success() {
+                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    return Ok(if text.is_empty() { None } else { Some(text) });
+                }
+                // Cancelled (1) versus a broken dialog is not worth distinguishing:
+                // both end up as "nothing was picked".
+                return Ok(None);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("无法打开文件选择器：{error}")),
+        }
+    }
+    Err("未能打开文件选择器，请手动输入路径".into())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn platform_pick(_kind: &str, _initial: Option<&str>) -> Result<Option<String>, String> {
+    Err("当前平台暂不支持原生文件选择器".into())
 }
 
 fn validate_source_file(
@@ -413,63 +526,23 @@ pub fn execute_tool(
             Ok(job)
         }
         "pick" => {
-            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-            {
-                let mut dialog = rfd::FileDialog::new();
-                if let Some(path_str) = params.get("path").and_then(Value::as_str) {
-                    let p = Path::new(path_str);
-                    if p.is_dir() {
-                        dialog = dialog.set_directory(p);
-                    }
-                }
-                let kind = params.get("kind").and_then(Value::as_str).unwrap_or("");
-                match kind {
-                    "audio" => {
-                        dialog = dialog.add_filter(
-                            "音频文件",
-                            &["aac", "m4a", "m4s", "mp3", "flac", "mka", "eac3", "wav"],
-                        );
-                    }
-                    "video" => {
-                        dialog = dialog.add_filter("视频文件", &["m4s", "mp4", "mkv", "mov"]);
-                    }
-                    "cc" => {
-                        dialog = dialog.add_filter("CC 字幕", &["json"]);
-                    }
-                    "srt" => {
-                        dialog = dialog.add_filter("SRT 字幕", &["srt"]);
-                    }
-                    "legacy" => {
-                        dialog = dialog.add_filter("Bilidown 历史", &["bilidownexport"]);
-                    }
-                    _ => {}
-                }
-                let chosen_path = if kind == "directory" {
-                    dialog.pick_folder()
-                } else {
-                    dialog.pick_file()
-                };
-                let chosen = chosen_path.map(|p| p.to_string_lossy().into_owned());
-                let cancelled = chosen.is_none();
-                let id = Uuid::new_v4().to_string();
-                let created_at = crate::tasks::service_now();
-                let job = json!({
-                    "id": id,
-                    "status": "completed",
-                    "operation": "pick",
-                    "createdAt": created_at,
-                    "result": { "path": chosen, "cancelled": cancelled },
-                    "path": chosen,
-                    "cancelled": cancelled,
-                });
-                store_job(store, &job)?;
-                Ok(job)
-            }
-            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-            {
-                let _ = (store, params);
-                Err("当前平台暂不支持原生文件选择器".into())
-            }
+            let kind = params.get("kind").and_then(Value::as_str).unwrap_or("");
+            let initial = params.get("path").and_then(Value::as_str);
+            let chosen = platform_pick(kind, initial)?;
+            let cancelled = chosen.is_none();
+            let id = Uuid::new_v4().to_string();
+            let created_at = crate::tasks::service_now();
+            let job = json!({
+                "id": id,
+                "status": "completed",
+                "operation": "pick",
+                "createdAt": created_at,
+                "result": { "path": chosen, "cancelled": cancelled },
+                "path": chosen,
+                "cancelled": cancelled,
+            });
+            store_job(store, &job)?;
+            Ok(job)
         }
         "ccToSrt" => {
             let source = validate_source_file(params.get("source"), &[".json"])?;
@@ -478,18 +551,15 @@ pub fn execute_tool(
                 return Err("字幕文件超过 10 MB".into());
             }
             let directory = resolve_output_directory(params, default_directory)?;
-            let content = std::fs::read_to_string(&source)
-                .map_err(|e| format!("读取源文件失败：{e}"))?;
+            let content =
+                std::fs::read_to_string(&source).map_err(|e| format!("读取源文件失败：{e}"))?;
             let trimmed = content.strip_prefix('\u{feff}').unwrap_or(&content);
-            let json_body: Value = serde_json::from_str(trimmed)
-                .map_err(|e| format!("字幕内容不是合法 JSON：{e}"))?;
+            let json_body: Value =
+                serde_json::from_str(trimmed).map_err(|e| format!("字幕内容不是合法 JSON：{e}"))?;
             let body = json_body.get("body").unwrap_or(&Value::Null);
             let srt_content = bewly_core::formats::to_srt(body)?;
 
-            let stem = source
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let target = directory.join(format!("{}.srt", bewly_core::naming::safe_name(stem)));
             if target.exists() {
                 return Err("输出文件已存在，已保留原文件".into());
@@ -517,16 +587,13 @@ pub fn execute_tool(
                 return Err("字幕文件超过 10 MB".into());
             }
             let directory = resolve_output_directory(params, default_directory)?;
-            let content = std::fs::read_to_string(&source)
-                .map_err(|e| format!("读取源文件失败：{e}"))?;
+            let content =
+                std::fs::read_to_string(&source).map_err(|e| format!("读取源文件失败：{e}"))?;
             let line_breaks = params.get("lineBreaks").and_then(Value::as_bool) != Some(false);
             let text_content = bewly_core::formats::srt_text(&content, line_breaks)?;
             let suffix = if line_breaks { ".txt" } else { ".joined.txt" };
 
-            let stem = source
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let target = directory.join(format!("{}{suffix}", bewly_core::naming::safe_name(stem)));
             if target.exists() {
                 return Err("输出文件已存在，已保留原文件".into());
@@ -550,19 +617,17 @@ pub fn execute_tool(
         "audioToMp3" => {
             let source = validate_source_file(
                 params.get("source"),
-                &[".aac", ".m4a", ".m4s", ".mp3", ".flac", ".mka", ".eac3", ".wav"],
+                &[
+                    ".aac", ".m4a", ".m4s", ".mp3", ".flac", ".mka", ".eac3", ".wav",
+                ],
             )?;
             let directory = resolve_output_directory(params, default_directory)?;
-            let stem = source
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let target = directory.join(format!("{}.mp3", bewly_core::naming::safe_name(stem)));
             if target.exists() {
                 return Err("输出文件已存在，已保留原文件".into());
             }
-            std::fs::create_dir_all(&directory)
-                .map_err(|e| format!("创建输出目录失败：{e}"))?;
+            std::fs::create_dir_all(&directory).map_err(|e| format!("创建输出目录失败：{e}"))?;
             bewly_media::transcode_mp3(&source, &target).map_err(|e| match e {
                 bewly_media::MediaError::Exists => "输出文件已存在，已保留原文件".to_string(),
                 other => other.to_string(),
@@ -583,28 +648,29 @@ pub fn execute_tool(
             Ok(job)
         }
         "mux" => {
-            let video = validate_source_file(
-                params.get("video"),
-                &[".mp4", ".m4s", ".mkv", ".mov"],
-            )?;
+            let video =
+                validate_source_file(params.get("video"), &[".mp4", ".m4s", ".mkv", ".mov"])?;
             let audio = validate_source_file(
                 params.get("audio"),
-                &[".aac", ".m4a", ".m4s", ".mp3", ".flac", ".mka", ".eac3", ".wav"],
+                &[
+                    ".aac", ".m4a", ".m4s", ".mp3", ".flac", ".mka", ".eac3", ".wav",
+                ],
             )?;
             let directory = resolve_output_directory(params, default_directory)?;
-            let video_stem = video
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            let target = directory.join(format!("{}.merged.mkv", bewly_core::naming::safe_name(video_stem)));
+            let video_stem = video.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let target = directory.join(format!(
+                "{}.merged.mkv",
+                bewly_core::naming::safe_name(video_stem)
+            ));
             if target.exists() {
                 return Err("输出文件已存在，已保留原文件".into());
             }
-            std::fs::create_dir_all(&directory)
-                .map_err(|e| format!("创建输出目录失败：{e}"))?;
-            bewly_media::remux(Some(&video), Some(&audio), &target, "mkv", false).map_err(|e| match e {
-                bewly_media::MediaError::Exists => "输出文件已存在，已保留原文件".to_string(),
-                other => other.to_string(),
+            std::fs::create_dir_all(&directory).map_err(|e| format!("创建输出目录失败：{e}"))?;
+            bewly_media::remux(Some(&video), Some(&audio), &target, "mkv", false).map_err(|e| {
+                match e {
+                    bewly_media::MediaError::Exists => "输出文件已存在，已保留原文件".to_string(),
+                    other => other.to_string(),
+                }
             })?;
 
             let path_str = target.to_string_lossy().into_owned();
@@ -688,13 +754,8 @@ mod tests {
         assert!(srt_text.contains("测试CC字幕"));
 
         let job_id = res["id"].as_str().unwrap();
-        let status_job = execute_tool(
-            &store,
-            "",
-            "",
-            &json!({ "op": "status", "id": job_id }),
-        )
-        .unwrap();
+        let status_job =
+            execute_tool(&store, "", "", &json!({ "op": "status", "id": job_id })).unwrap();
         assert_eq!(status_job["status"], "completed");
 
         let err = execute_tool(
@@ -863,20 +924,39 @@ mod tests {
         });
         store_job(&store, &running_job).unwrap();
 
-        let cancel_res = execute_tool(&store, "", "", &json!({ "op": "cancel", "id": "job-running-1" })).unwrap();
+        let cancel_res = execute_tool(
+            &store,
+            "",
+            "",
+            &json!({ "op": "cancel", "id": "job-running-1" }),
+        )
+        .unwrap();
         assert_eq!(cancel_res["cancelled"], true);
 
         let updated_job = load_job(&store, "job-running-1").unwrap().unwrap();
         assert_eq!(updated_job["status"], "failed");
         assert_eq!(updated_job["error"], "已取消工具操作");
 
-        let unknown_err = execute_tool(&store, "", "", &json!({ "op": "somethingUnknown" })).unwrap_err();
+        let unknown_err =
+            execute_tool(&store, "", "", &json!({ "op": "somethingUnknown" })).unwrap_err();
         assert_eq!(unknown_err, "未知辅助工具");
 
-        let non_abs_err = execute_tool(&store, test_dir.to_str().unwrap(), "", &json!({ "op": "ccToSrt", "source": "rel/path.json" })).unwrap_err();
+        let non_abs_err = execute_tool(
+            &store,
+            test_dir.to_str().unwrap(),
+            "",
+            &json!({ "op": "ccToSrt", "source": "rel/path.json" }),
+        )
+        .unwrap_err();
         assert_eq!(non_abs_err, "请选择支持的本地文件");
 
-        let wrong_ext_err = execute_tool(&store, test_dir.to_str().unwrap(), "", &json!({ "op": "ccToSrt", "source": test_dir.join("wrong.txt").to_str().unwrap() })).unwrap_err();
+        let wrong_ext_err = execute_tool(
+            &store,
+            test_dir.to_str().unwrap(),
+            "",
+            &json!({ "op": "ccToSrt", "source": test_dir.join("wrong.txt").to_str().unwrap() }),
+        )
+        .unwrap_err();
         assert_eq!(wrong_ext_err, "请选择支持的本地文件");
 
         let not_found_err = execute_tool(&store, test_dir.to_str().unwrap(), "", &json!({ "op": "ccToSrt", "source": test_dir.join("nonexistent.json").to_str().unwrap() })).unwrap_err();

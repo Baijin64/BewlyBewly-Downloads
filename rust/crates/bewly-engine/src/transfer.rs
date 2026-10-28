@@ -184,7 +184,9 @@ pub fn download(
         if aria2_path.exists() {
             if let Ok(control) = crate::aria2_control::read(&aria2_path) {
                 if control.can_resume(total, piece_length) {
-                    if let Some(recovered) = PieceMap::from_bits(total, piece_length, control.bitfield) {
+                    if let Some(recovered) =
+                        PieceMap::from_bits(total, piece_length, control.bitfield)
+                    {
                         return recovered;
                     }
                 }
@@ -515,8 +517,10 @@ mod tests {
             handle: Some(handle),
         };
 
-        let directory = std::env::temp_dir()
-            .join(format!("bewly-transfer-aria2-resume-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "bewly-transfer-aria2-resume-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&directory).unwrap();
         let destination = directory.join("video.m4s");
         let aria2_path = directory.join("video.m4s.aria2");
@@ -546,8 +550,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(std::fs::read(&result).unwrap(), data);
-        assert!(!aria2_path.exists(), ".aria2 control file should be removed on completion");
-        assert!(!sidecar::path_for(&destination).exists(), "sidecar file should be removed on completion");
+        assert!(
+            !aria2_path.exists(),
+            ".aria2 control file should be removed on completion"
+        );
+        assert!(
+            !sidecar::path_for(&destination).exists(),
+            "sidecar file should be removed on completion"
+        );
 
         let ranges = requested_ranges.lock().unwrap().clone();
         for (start, end) in ranges {

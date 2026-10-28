@@ -226,14 +226,7 @@ fn start_service(service_mode: &str) -> Result<u32, String> {
 
 fn ensure_service(allow_start: bool) -> Result<(u16, String), Value> {
     if let Some((port, token, pid)) = service_descriptor() {
-        if http_rpc(
-            port,
-            &token,
-            &json!({ "method": "health" }),
-            1000,
-        )
-        .is_ok()
-        {
+        if http_rpc(port, &token, &json!({ "method": "health" }), 1000).is_ok() {
             if let Some(p) = pid {
                 LAST_SERVICE_PID.store(p, Ordering::Relaxed);
             }
@@ -251,14 +244,7 @@ fn ensure_service(allow_start: bool) -> Result<(u16, String), Value> {
     for _ in 0..100 {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if let Some((port, token, pid)) = service_descriptor() {
-            if http_rpc(
-                port,
-                &token,
-                &json!({ "method": "health" }),
-                1000,
-            )
-            .is_ok()
-            {
+            if http_rpc(port, &token, &json!({ "method": "health" }), 1000).is_ok() {
                 if let Some(p) = pid {
                     LAST_SERVICE_PID.store(p, Ordering::Relaxed);
                 }
@@ -357,7 +343,16 @@ fn register_platform(manifest_path: &Path) -> Result<(), String> {
     for browser in ["Google\\Chrome", "Microsoft\\Edge"] {
         let key = format!("HKCU\\Software\\{browser}\\NativeMessagingHosts\\io.bewly.download");
         let status = Command::new("reg.exe")
-            .args(["add", &key, "/ve", "/t", "REG_SZ", "/d", &manifest_str, "/f"])
+            .args([
+                "add",
+                &key,
+                "/ve",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &manifest_str,
+                "/f",
+            ])
             .status()
             .map_err(|error| format!("注册表写入失败: {error}"))?;
         if !status.success() {
@@ -382,7 +377,9 @@ fn unregister_platform(manifest_path: &Path) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn browser_manifest_paths() -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
-    let app_support = PathBuf::from(home).join("Library").join("Application Support");
+    let app_support = PathBuf::from(home)
+        .join("Library")
+        .join("Application Support");
     vec![
         app_support
             .join("Google")
@@ -467,8 +464,7 @@ fn register() -> Result<(), String> {
         "type": "stdio",
         "allowed_origins": allowed_origins(),
     });
-    let manifest_bytes =
-        serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
     std::fs::write(&manifest_path, &manifest_bytes).map_err(|error| error.to_string())?;
     register_platform(&manifest_path)?;
     println!("注册成功：{}", manifest_path.display());
@@ -496,34 +492,33 @@ fn run_stdio(origin: &str) -> i32 {
     let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let watcher_stopped = stopped.clone();
 
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            if watcher_stopped.load(Ordering::Relaxed) {
-                break;
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        if watcher_stopped.load(Ordering::Relaxed) {
+            break;
+        }
+        let pid = LAST_SERVICE_PID.load(Ordering::Relaxed);
+        if pid == 0 || DISPATCHING.load(Ordering::Relaxed) > 0 {
+            continue;
+        }
+        if !is_pid_alive(pid) {
+            LAST_SERVICE_PID.store(0, Ordering::Relaxed);
+            let snapshot = match std::fs::read_to_string(data_directory().join("ui-snapshot.json"))
+            {
+                Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(Value::Null),
+                Err(_) => Value::Null,
+            };
+            let mut event_msg = json!({ "event": "serviceStopped" });
+            if !snapshot.is_null() {
+                event_msg["snapshot"] = snapshot;
             }
-            let pid = LAST_SERVICE_PID.load(Ordering::Relaxed);
-            if pid == 0 || DISPATCHING.load(Ordering::Relaxed) > 0 {
-                continue;
-            }
-            if !is_pid_alive(pid) {
-                LAST_SERVICE_PID.store(0, Ordering::Relaxed);
-                let snapshot = match std::fs::read_to_string(data_directory().join("ui-snapshot.json")) {
-                    Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(Value::Null),
-                    Err(_) => Value::Null,
-                };
-                let mut event_msg = json!({ "event": "serviceStopped" });
-                if !snapshot.is_null() {
-                    event_msg["snapshot"] = snapshot;
+            if let Ok(payload) = serde_json::to_vec(&event_msg) {
+                if let Ok(mut out) = watcher_writer.lock() {
+                    let _ = write_frame(&mut *out, &payload);
                 }
-                if let Ok(payload) = serde_json::to_vec(&event_msg) {
-                    if let Ok(mut out) = watcher_writer.lock() {
-                        let _ = write_frame(&mut *out, &payload);
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                std::process::exit(0);
             }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::process::exit(0);
         }
     });
 
