@@ -18,6 +18,8 @@ on:
 
 permissions:
   contents: write
+  # `gh run download` reads the artifacts produced by the current run.
+  actions: read
 
 jobs:
   extension:
@@ -111,10 +113,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          path: artifacts
-          merge-multiple: true
+      - name: Collect artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          gh run download "$GITHUB_RUN_ID" --dir artifacts --pattern '*' || true
+          # `gh run download` nests one directory per artifact; flatten it.
+          find artifacts -mindepth 2 -type f -exec mv -t artifacts {} +
+          find artifacts -mindepth 1 -type d -empty -delete
       - name: Add installer notes
         run: cp docs/INSTALL-DOWNLOADS.md artifacts/INSTALL-DOWNLOADS.md
       - name: Checksums
