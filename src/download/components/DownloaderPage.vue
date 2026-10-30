@@ -41,17 +41,21 @@ function selectLinks() {
   openDownloadSelection(links, allParts.value)
 }
 
+async function refreshCurrentTasks() {
+  refreshKey.value++
+  await loadSettings()
+}
+
 onMounted(() => {
   loadSettings()
   window.addEventListener('bewly-download-settings-changed', loadSettings)
-  handlePageRefresh.value = async () => {
-    refreshKey.value++
-    await loadSettings()
-  }
+  handlePageRefresh.value = refreshCurrentTasks
   handleReachBottom.value = async () => {}
 })
 onBeforeUnmount(() => {
   window.removeEventListener('bewly-download-settings-changed', loadSettings)
+  if (handlePageRefresh.value === refreshCurrentTasks)
+    handlePageRefresh.value = undefined
 })
 </script>
 

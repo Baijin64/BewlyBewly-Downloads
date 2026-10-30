@@ -18,7 +18,7 @@ const lineBreaks = ref(true)
 const busy = ref(false)
 const error = ref('')
 const result = ref('')
-const controller = new AbortController()
+let controller: AbortController | null = null
 const operations = [
   { value: 'convertId', label: 'BV / AV 转换' },
   { value: 'joinTime', label: '入站时间查询' },
@@ -33,6 +33,8 @@ async function pick(
 ) {
   busy.value = true
   error.value = ''
+  controller?.abort()
+  controller = new AbortController()
   try {
     const path = await pickLocalFile(kind, undefined, controller.signal)
     if (path) {
@@ -52,10 +54,15 @@ async function pick(
     busy.value = false
   }
 }
+function cancelTool() {
+  controller?.abort()
+}
 async function execute() {
   busy.value = true
   error.value = ''
   result.value = ''
+  controller?.abort()
+  controller = new AbortController()
   try {
     const output = await runTool<{ path?: string, text?: string }>(
       {
@@ -89,7 +96,8 @@ onMounted(async () => {
     error.value = String((err as Error).message)
   }
 })
-onBeforeUnmount(() => controller.abort())
+onBeforeUnmount(() => controller?.abort())
+defineExpose({ cancelTool })
 </script>
 
 <template>

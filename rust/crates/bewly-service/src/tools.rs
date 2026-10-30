@@ -385,6 +385,24 @@ fn platform_pick(_kind: &str, _initial: Option<&str>) -> Result<Option<String>, 
     Err("当前平台暂不支持原生文件选择器".into())
 }
 
+/// Runs the native picker and builds the finished job. It takes no store so
+/// the caller can keep the database unlocked while the dialog is open.
+pub fn pick_job(params: &Value) -> Result<Value, String> {
+    let kind = params.get("kind").and_then(Value::as_str).unwrap_or("");
+    let initial = params.get("path").and_then(Value::as_str);
+    let chosen = platform_pick(kind, initial)?;
+    let cancelled = chosen.is_none();
+    Ok(json!({
+        "id": Uuid::new_v4().to_string(),
+        "status": "completed",
+        "operation": "pick",
+        "createdAt": crate::tasks::service_now(),
+        "result": { "path": chosen, "cancelled": cancelled },
+        "path": chosen,
+        "cancelled": cancelled,
+    }))
+}
+
 fn validate_source_file(
     path_val: Option<&Value>,
     allowed_exts: &[&str],
@@ -526,21 +544,7 @@ pub fn execute_tool(
             Ok(job)
         }
         "pick" => {
-            let kind = params.get("kind").and_then(Value::as_str).unwrap_or("");
-            let initial = params.get("path").and_then(Value::as_str);
-            let chosen = platform_pick(kind, initial)?;
-            let cancelled = chosen.is_none();
-            let id = Uuid::new_v4().to_string();
-            let created_at = crate::tasks::service_now();
-            let job = json!({
-                "id": id,
-                "status": "completed",
-                "operation": "pick",
-                "createdAt": created_at,
-                "result": { "path": chosen, "cancelled": cancelled },
-                "path": chosen,
-                "cancelled": cancelled,
-            });
+            let job = pick_job(params)?;
             store_job(store, &job)?;
             Ok(job)
         }

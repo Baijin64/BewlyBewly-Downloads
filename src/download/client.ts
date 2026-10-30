@@ -4,7 +4,8 @@ import type { DownloadMethod, DownloadReply } from './types'
 import { confirmHelperWake, helperAutoStart } from './wake'
 
 async function send<T>(method: DownloadMethod, params: Record<string, unknown>): Promise<DownloadReply<T>> {
-  const timeoutMs = method === 'createTasks' ? 180000 : method === 'inspect' ? 30000 : 25000
+  // The native picker stays open until the user chooses.
+  const timeoutMs = method === 'tool' && params.op === 'pick' ? 610000 : method === 'createTasks' ? 180000 : method === 'inspect' ? 30000 : 25000
   let timer: ReturnType<typeof setTimeout> | undefined
   let reply: DownloadReply<T>
   try {

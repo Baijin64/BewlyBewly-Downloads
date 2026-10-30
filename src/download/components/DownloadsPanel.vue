@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 
 import Button from '~/components/Button.vue'
 import Dialog from '~/components/Dialog.vue'
@@ -19,7 +19,7 @@ import DownloadProgress from './DownloadProgress.vue'
 import DownloadTaskHeader from './DownloadTaskHeader.vue'
 import SelectionButton from './SelectionButton.vue'
 
-const data = ref<TaskQuery>({
+const data = shallowRef<TaskQuery>({
   items: [],
   total: 0,
   page: 1,
@@ -43,10 +43,26 @@ const loading = ref(false)
 const confirmation = ref<{ action: string, ids: string[] }>()
 const editing = ref(false)
 const editOptions = ref<DownloadOptions>({ ...defaultOptions })
-let timer: ReturnType<typeof setInterval> | undefined
+let timer: ReturnType<typeof setTimeout> | undefined
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
+
+function schedulePoll() {
+  clearTimeout(timer)
+  if (disposed)
+    return
+  const hasActive = (data.value?.counts?.active ?? 0) > 0 || loading.value
+  const delay = hasActive ? 2000 : 6000
+  timer = setTimeout(async () => {
+    if (disposed)
+      return
+    if (!document.hidden && !busy.value)
+      await refresh()
+    else
+      schedulePoll()
+  }, delay)
+}
 async function refresh(probe = false) {
   if (loading.value || disposed)
     return
@@ -76,6 +92,8 @@ async function refresh(probe = false) {
     loading.value = false
     if (current !== generation && !disposed)
       refresh()
+    else if (!disposed)
+      schedulePoll()
   }
 }
 watch(tab, () => {
@@ -203,10 +221,6 @@ onMounted(async () => {
       )
     }
     await refresh()
-    timer = setInterval(() => {
-      if (!document.hidden && !busy.value)
-        refresh()
-    }, 2000)
   }
   catch (err) {
     error.value = String((err as Error).message)
@@ -214,7 +228,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   disposed = true
-  clearInterval(timer)
+  clearTimeout(timer)
   clearTimeout(searchTimer)
 })
 </script>

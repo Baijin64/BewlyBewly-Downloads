@@ -128,16 +128,19 @@ fn acquire_service_lock(data_directory: &Path) -> Result<(), String> {
 fn open_system_target(action: &str, target: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let target_str = target.to_string_lossy();
-        let mut cmd = if action == "reveal" {
-            let mut c = std::process::Command::new("explorer.exe");
-            c.arg(format!("/select,\"{target_str}\""));
-            c
+        let mut cmd = std::process::Command::new("explorer.exe");
+        if action == "reveal" {
+            // Explorer parses its own command line: the quotes must reach it as
+            // written, not escaped the way `arg` does for paths with spaces.
+            cmd.raw_arg(format!("/select,\"{target_str}\""));
         } else {
-            let mut c = std::process::Command::new("cmd.exe");
-            c.args(["/c", "start", "", &target_str]);
-            c
-        };
+            // Explorer opens a file with its default app without going through
+            // cmd.exe, which would flash a console and treat `&` in a title as a
+            // command separator.
+            cmd.arg(target);
+        }
         cmd.spawn()
             .map_err(|error| format!("无法打开目标: {error}"))?;
     }
@@ -203,6 +206,7 @@ pub struct ServiceState {
     pub running: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
     pub cookie: std::sync::Mutex<String>,
     pub policy: std::sync::Mutex<crate::lifetime::CompletionPolicy>,
+    pub last_snapshot_at: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl ServiceState {
@@ -230,6 +234,7 @@ impl ServiceState {
             running: std::sync::Mutex::new(std::collections::HashMap::new()),
             cookie: std::sync::Mutex::new(initial_cookie),
             policy: std::sync::Mutex::new(crate::lifetime::CompletionPolicy::new()),
+            last_snapshot_at: std::sync::Mutex::new(Some(std::time::Instant::now())),
         })
     }
 
@@ -266,18 +271,14 @@ impl ServiceState {
     /// Mirrors `lifetime.snapshot()`: busy tasks or in-flight requests suppress
     /// the idle exit, and `exitAt` is only present when an exit is pending.
     pub fn runtime(&self) -> Value {
+        let active = self.store().has_active_tasks().unwrap_or(false);
         let busy = self
             .running
             .lock()
             .map(|map| !map.is_empty())
             .unwrap_or(false)
             || self.active_requests.load(Ordering::Relaxed) > 0
-            || self.tasks().iter().any(|task| {
-                matches!(
-                    task.get("status").and_then(Value::as_str).unwrap_or(""),
-                    "queued" | "resolving" | "downloading" | "paused" | "muxing" | "postprocessing"
-                )
-            })
+            || active
             || self.policy.lock().map(|p| p.due > 0).unwrap_or(false);
         let idle_minutes = self.settings().idle_exit_minutes;
         let runtime = self.lifetime.lock().snapshot(busy, idle_minutes);
@@ -292,9 +293,33 @@ impl ServiceState {
     }
 
     pub fn save_snapshot(&self) {
+        if let Ok(mut guard) = self.last_snapshot_at.lock() {
+            *guard = Some(std::time::Instant::now());
+        }
         let tasks = self.tasks();
         let counts = tasks::counts(&tasks);
         let _ = crate::health::write(&self.data_directory, &self.health_value(), &tasks, &counts);
+    }
+
+    pub fn save_snapshot_throttled(&self, min_interval: std::time::Duration) -> Result<(), String> {
+        let should_save = if let Ok(mut guard) = self.last_snapshot_at.lock() {
+            match *guard {
+                Some(last) if last.elapsed() < min_interval => false,
+                _ => {
+                    *guard = Some(std::time::Instant::now());
+                    true
+                }
+            }
+        } else {
+            true
+        };
+        if should_save {
+            let tasks = self.tasks();
+            let counts = tasks::counts(&tasks);
+            crate::health::write(&self.data_directory, &self.health_value(), &tasks, &counts)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 }
 
@@ -1059,6 +1084,13 @@ fn batch_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
 }
 
 fn tool_request(state: &ServiceState, params: &Value) -> Result<Value, String> {
+    // The picker waits on the user; holding the store meanwhile would stall
+    // every download's progress write and every task query.
+    if params.get("op").and_then(Value::as_str) == Some("pick") {
+        let job = tools::pick_job(params)?;
+        tools::store_job(&state.store(), &job)?;
+        return Ok(job);
+    }
     let default_directory = state.settings().directory;
     let cookie = state
         .cookie
@@ -1215,7 +1247,14 @@ async fn rpc(
         state.lifetime.lock().touch();
     }
     state.active_requests.fetch_add(1, Ordering::Relaxed);
-    let result = dispatch(&state, method, &params);
+    // Dispatch can block on the network or a native dialog; keep it off the
+    // async workers so the scheduler and other requests keep running.
+    let dispatch_state = Arc::clone(&state);
+    let dispatch_method = method.to_string();
+    let result =
+        tokio::task::spawn_blocking(move || dispatch(&dispatch_state, &dispatch_method, &params))
+            .await
+            .unwrap_or_else(|_| Err("下载助手内部错误".into()));
     state.active_requests.fetch_sub(1, Ordering::Relaxed);
     let runtime = state.runtime();
     match result {

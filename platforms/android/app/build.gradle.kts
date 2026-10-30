@@ -36,6 +36,11 @@ android {
     resources {
       excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+    // Extract native libraries on install: the bundled FFmpeg executable
+    // (jniLibs/<abi>/libffmpeg.so) must exist as a file in nativeLibraryDir to run.
+    jniLibs {
+      useLegacyPackaging = true
+    }
   }
 }
 

@@ -29,6 +29,8 @@ pub struct Store {
     directory: PathBuf,
 }
 
+pub type SqliteStore = Store;
+
 impl Store {
     /// Opens (and if needed creates) the database, then applies the same
     /// migration the Node build applies on startup.
@@ -37,6 +39,8 @@ impl Store {
         let connection = Connection::open(directory.join("downloads.sqlite"))?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
 
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         let has_tasks: bool = connection
@@ -111,7 +115,7 @@ impl Store {
     pub fn tasks(&self) -> Result<Vec<Value>, StoreError> {
         let mut statement = self
             .connection
-            .prepare("SELECT data FROM tasks ORDER BY rowid DESC")?;
+            .prepare_cached("SELECT data FROM tasks ORDER BY rowid DESC")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
         let mut tasks = Vec::new();
         for row in rows {
@@ -121,11 +125,11 @@ impl Store {
     }
 
     pub fn task(&self, id: &str) -> Result<Option<Value>, StoreError> {
-        let data: Option<String> = self
+        let mut statement = self
             .connection
-            .query_row("SELECT data FROM tasks WHERE id = ?", params![id], |row| {
-                row.get(0)
-            })
+            .prepare_cached("SELECT data FROM tasks WHERE id = ?")?;
+        let data: Option<String> = statement
+            .query_row(params![id], |row| row.get(0))
             .optional()?;
         match data {
             Some(text) => Ok(Some(serde_json::from_str(&text)?)),
@@ -138,17 +142,76 @@ impl Store {
             .get("id")
             .and_then(Value::as_str)
             .ok_or(StoreError::MissingId)?;
-        self.connection.execute(
+        let mut statement = self.connection.prepare_cached(
             "INSERT INTO tasks(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
-            params![id, serde_json::to_string(task)?],
         )?;
+        statement.execute(params![id, serde_json::to_string(task)?])?;
         Ok(())
     }
 
+    pub fn update_task_progress(&self, id: &str, percent: u32, speed: u64) -> Result<bool, StoreError> {
+        let rows = self.connection.execute(
+            "UPDATE tasks SET data = json_set(data, '$.progress', ?2, '$.speed', ?3) WHERE id = ?1 AND json_extract(data, '$.status') = 'downloading'",
+            params![id, percent, speed],
+        )?;
+        Ok(rows > 0)
+    }
+
     pub fn remove_task(&self, id: &str) -> Result<usize, StoreError> {
-        Ok(self
+        let mut statement = self
             .connection
-            .execute("DELETE FROM tasks WHERE id=?", params![id])?)
+            .prepare_cached("DELETE FROM tasks WHERE id=?")?;
+        Ok(statement.execute(params![id])?)
+    }
+
+    pub fn has_active_tasks(&self) -> Result<bool, StoreError> {
+        let mut stmt = self.connection.prepare_cached(
+            "SELECT 1 FROM tasks WHERE json_extract(data, '$.status') IN ('queued', 'preflight', 'downloading', 'merging', 'postprocess', 'paused', 'waiting_input', 'resolving', 'muxing', 'postprocessing') LIMIT 1",
+        )?;
+        let exists = stmt.exists([])?;
+        Ok(exists)
+    }
+
+    pub fn next_queued_task(&self) -> Result<Option<Value>, StoreError> {
+        self.next_runnable_queued_task(true)
+    }
+
+    pub fn next_runnable_queued_task(&self, has_cookie: bool) -> Result<Option<Value>, StoreError> {
+        let sql = if has_cookie {
+            "SELECT data FROM tasks WHERE json_extract(data, '$.status') = 'queued' ORDER BY rowid ASC LIMIT 1"
+        } else {
+            "SELECT data FROM tasks WHERE json_extract(data, '$.status') = 'queued' AND json_extract(data, '$.prepared') IS NOT NULL ORDER BY rowid ASC LIMIT 1"
+        };
+        let mut stmt = self.connection.prepare_cached(sql)?;
+        let data: Option<String> = stmt.query_row([], |row| row.get(0)).optional()?;
+        match data {
+            Some(text) => Ok(Some(serde_json::from_str(&text)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_tasks(&self) -> Result<Vec<Value>, StoreError> {
+        self.tasks()
+    }
+
+    pub fn get_task(&self, id: &str) -> Result<Option<Value>, StoreError> {
+        self.task(id)
+    }
+
+    pub fn upsert_task(&self, task: &Value) -> Result<(), StoreError> {
+        self.put_task(task)
+    }
+
+    pub fn delete_task(&self, id: &str) -> Result<usize, StoreError> {
+        self.remove_task(id)
+    }
+
+    pub fn get_setting(&self) -> Result<Option<Value>, StoreError> {
+        self.settings()
+    }
+
+    pub fn set_setting(&self, settings: &Value) -> Result<(), StoreError> {
+        self.put_settings(settings)
     }
 
     pub fn put_preview(&self, id: &str, preview: &Value) -> Result<(), StoreError> {
@@ -208,10 +271,10 @@ impl Store {
     }
 
     pub fn settings(&self) -> Result<Option<Value>, StoreError> {
-        let data: Option<String> = self
+        let mut statement = self
             .connection
-            .query_row("SELECT data FROM settings WHERE id=1", [], |row| row.get(0))
-            .optional()?;
+            .prepare_cached("SELECT data FROM settings WHERE id=1")?;
+        let data: Option<String> = statement.query_row([], |row| row.get(0)).optional()?;
         match data {
             Some(text) => Ok(Some(serde_json::from_str(&text)?)),
             None => Ok(None),
@@ -219,10 +282,10 @@ impl Store {
     }
 
     pub fn put_settings(&self, settings: &Value) -> Result<(), StoreError> {
-        self.connection.execute(
+        let mut statement = self.connection.prepare_cached(
             "INSERT INTO settings(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
-            params![serde_json::to_string(settings)?],
         )?;
+        statement.execute(params![serde_json::to_string(settings)?])?;
         Ok(())
     }
 
@@ -404,5 +467,99 @@ mod tests {
 
         let completed = reopened.get_job("job-completed").unwrap().unwrap();
         assert_eq!(completed["status"], "completed");
+    }
+
+    #[test]
+    fn queries_active_tasks_and_next_queued_task() {
+        let temp = TempDir::new();
+        let store = Store::open(&temp.0).unwrap();
+
+        assert!(!store.has_active_tasks().unwrap());
+        assert!(store.next_queued_task().unwrap().is_none());
+
+        store
+            .put_task(&serde_json::json!({
+                "id": "t1",
+                "status": "completed"
+            }))
+            .unwrap();
+        assert!(!store.has_active_tasks().unwrap());
+        assert!(store.next_queued_task().unwrap().is_none());
+
+        store
+            .put_task(&serde_json::json!({
+                "id": "t2",
+                "status": "queued"
+            }))
+            .unwrap();
+        assert!(store.has_active_tasks().unwrap());
+        let queued = store.next_queued_task().unwrap().unwrap();
+        assert_eq!(queued["id"], "t2");
+
+        let plan = store
+            .query_plan("SELECT 1 FROM tasks WHERE json_extract(data, '$.status') IN ('queued', 'downloading') LIMIT 1")
+            .unwrap()
+            .join(" | ");
+        assert!(plan.contains("task_status"), "plan should use task_status: {plan}");
+
+        // Test Head-of-Line blocking prevention when has_cookie is false
+        // t2 is queued but has no "prepared" field.
+        // t3 is queued after t2 and has "prepared".
+        store
+            .put_task(&serde_json::json!({
+                "id": "t3",
+                "status": "queued",
+                "prepared": { "video": {} }
+            }))
+            .unwrap();
+
+        // When has_cookie is true, t2 (unprepared) is returned first
+        let next_with_cookie = store.next_runnable_queued_task(true).unwrap().unwrap();
+        assert_eq!(next_with_cookie["id"], "t2");
+
+        // When has_cookie is false, t2 is skipped and t3 (prepared) is returned!
+        let next_without_cookie = store.next_runnable_queued_task(false).unwrap().unwrap();
+        assert_eq!(next_without_cookie["id"], "t3");
+    }
+
+    #[test]
+    fn updates_task_progress_only_when_downloading() {
+        let temp = TempDir::new();
+        let store = Store::open(&temp.0).unwrap();
+
+        store
+            .put_task(&serde_json::json!({
+                "id": "t-downloading",
+                "status": "downloading",
+                "progress": 10,
+                "speed": 100
+            }))
+            .unwrap();
+
+        store
+            .put_task(&serde_json::json!({
+                "id": "t-paused",
+                "status": "paused",
+                "progress": 20,
+                "speed": 0
+            }))
+            .unwrap();
+
+        let updated = store.update_task_progress("t-downloading", 45, 1024000).unwrap();
+        assert!(updated);
+        let task = store.task("t-downloading").unwrap().unwrap();
+        assert_eq!(task["progress"], 45);
+        assert_eq!(task["speed"], 1024000);
+        assert_eq!(task["status"], "downloading");
+
+        let updated_paused = store.update_task_progress("t-paused", 50, 2048000).unwrap();
+        assert!(!updated_paused);
+        let paused_task = store.task("t-paused").unwrap().unwrap();
+        assert_eq!(paused_task["progress"], 20);
+        assert_eq!(paused_task["speed"], 0);
+        assert_eq!(paused_task["status"], "paused");
+
+        let updated_nonexistent = store.update_task_progress("t-nonexistent", 50, 100).unwrap();
+        assert!(!updated_nonexistent);
     }
 }

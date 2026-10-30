@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onClickOutside, onKeyStroke, useMouseInElement } from '@vueuse/core'
+import { onClickOutside, onKeyStroke } from '@vueuse/core'
 import type { Ref, UnwrapNestedRefs } from 'vue'
 
 import { useBewlyApp } from '~/composables/useAppProvider'
@@ -45,7 +45,7 @@ const userInfo = reactive<UserInfo | NonNullable<unknown>>({}) as UnwrapNestedRe
 
 const hideTopBar = ref<boolean>(false)
 const headerTarget = ref(null)
-const { isOutside: isOutsideTopBar } = useMouseInElement(headerTarget)
+const isOutsideTopBar = ref<boolean>(true)
 
 // initially, assume the user is logged in cuz data retrieval is slow, which may show the login
 // button even after login. if the user is not logged in, the login button will show up later
@@ -332,12 +332,30 @@ onMounted(() => {
       })
     }
     else {
-      window.addEventListener('scroll', handleScroll)
+      window.addEventListener('scroll', handleScroll, { passive: true })
     }
   })
 })
 
+let updateIntervalTimer: ReturnType<typeof setInterval> | null = null
+let scrollRafId: number | null = null
+
+onBeforeUnmount(() => {
+  if (updateIntervalTimer) {
+    clearInterval(updateIntervalTimer)
+    updateIntervalTimer = null
+  }
+})
+
 onUnmounted(() => {
+  if (updateIntervalTimer) {
+    clearInterval(updateIntervalTimer)
+    updateIntervalTimer = null
+  }
+  if (scrollRafId !== null) {
+    cancelAnimationFrame(scrollRafId)
+    scrollRafId = null
+  }
   window.removeEventListener('scroll', handleScroll)
   emitter.off(OVERLAY_SCROLL_BAR_SCROLL)
 })
@@ -345,34 +363,45 @@ onUnmounted(() => {
 async function initData() {
   await getUserInfo()
 
+  if (updateIntervalTimer) {
+    clearInterval(updateIntervalTimer)
+    updateIntervalTimer = null
+  }
+
   // automatically update notifications and moments count
-  setInterval(() => {
+  updateIntervalTimer = setInterval(() => {
+    if (document.hidden)
+      return
     getUnreadMessageCount()
     getTopBarNewMomentsCount()
   }, updateInterval)
 }
 
 function handleScroll() {
-  if (isHomePage() && !settings.value.useOriginalBilibiliHomepage) {
-    const osInstance = scrollbarRef.value?.osInstance()
-    scrollTop.value = osInstance.elements().viewport.scrollTop as number
-  }
-  else {
-    scrollTop.value = document.documentElement.scrollTop
-  }
+  if (scrollRafId !== null)
+    return
+  scrollRafId = requestAnimationFrame(() => {
+    scrollRafId = null
+    if (isHomePage() && !settings.value.useOriginalBilibiliHomepage) {
+      const osInstance = scrollbarRef.value?.osInstance()
+      scrollTop.value = osInstance?.elements?.()?.viewport?.scrollTop as number ?? 0
+    }
+    else {
+      scrollTop.value = document.documentElement.scrollTop
+    }
 
-  if (scrollTop.value === 0)
-    toggleTopBarVisible(true)
-
-  if (settings.value.autoHideTopBar && isOutsideTopBar && scrollTop.value !== 0) {
-    if (scrollTop.value > oldScrollTop.value)
-      toggleTopBarVisible(false)
-
-    else
+    if (scrollTop.value === 0)
       toggleTopBarVisible(true)
-  }
 
-  oldScrollTop.value = scrollTop.value
+    if (settings.value.autoHideTopBar && isOutsideTopBar.value && scrollTop.value !== 0) {
+      if (scrollTop.value > oldScrollTop.value)
+        toggleTopBarVisible(false)
+      else
+        toggleTopBarVisible(true)
+    }
+
+    oldScrollTop.value = scrollTop.value
+  })
 }
 
 async function getUserInfo() {
@@ -490,6 +519,8 @@ defineExpose({
       w="full" transition="all 300 ease-in-out"
       :class="{ 'hide': hideTopBar, 'force-white-icon': forceWhiteIcon }"
       :style="{ position: isTopBarFixed ? 'fixed' : 'absolute' }"
+      @mouseenter="isOutsideTopBar = false"
+      @mouseleave="isOutsideTopBar = true"
     >
       <main
         max-w="$bew-page-max-width"

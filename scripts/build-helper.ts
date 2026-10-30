@@ -32,8 +32,9 @@ const shared: BuildOptions = {
 
 if (target.startsWith('win32')) {
   const flags: string[] = []
+  // --bin points at the FFmpeg build (dist/toolchain/ffmpeg/win32-x64 by default).
   if (shared.bin)
-    flags.push('-BinDirectory', shared.bin)
+    flags.push('-FfmpegDirectory', shared.bin)
   if (shared.stageOnly)
     flags.push('-StageOnly')
   if (args.includes('--dev-sign'))

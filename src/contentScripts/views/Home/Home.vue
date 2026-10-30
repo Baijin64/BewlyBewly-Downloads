@@ -261,7 +261,7 @@ function toggleTabContentLoading(loading: boolean) {
       </header>
 
       <Transition name="page-fade">
-        <KeepAlive include="ForYou">
+        <KeepAlive include="ForYou" :max="3">
           <Component
             :is="pages[activatedPage]" :key="activatedPage"
             ref="tabPageRef"

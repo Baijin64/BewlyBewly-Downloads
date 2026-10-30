@@ -108,6 +108,8 @@ async function getData() {
 
 async function getLiveVideoList() {
   let lastLiveVideoListLength = liveVideoList.value.length
+  let fetchedItemsCount = 0
+  let lastItemLiveStatus = 0
   try {
     const response: FollowingLiveResult = await api.live.getFollowingLiveList({
       page: livePage.value,
@@ -134,6 +136,10 @@ async function getLiveVideoList() {
           resData.push(item)
       })
 
+      fetchedItemsCount = resData.length
+      if (response.data.list.length > 0)
+        lastItemLiveStatus = response.data.list[response.data.list.length - 1].live_status
+
       // when videoList has length property, it means it is the first time to load
       if (!liveVideoList.value.length) {
         liveVideoList.value = resData.map(item => ({ uniqueId: `${item.roomid}`, item }))
@@ -150,7 +156,13 @@ async function getLiveVideoList() {
   }
   finally {
     // 當直播列表結果大於9時（9是返回的列表數量）且如果最后一支影片還是正在直播，則繼續獲取
-    if (liveVideoList.value.length > 9 && liveVideoList.value[liveVideoList.value.length - 1]?.item?.live_status === 1) {
+    if (
+      livePage.value <= 5
+      && fetchedItemsCount > 0
+      && lastItemLiveStatus === 1
+      && liveVideoList.value.length > 9
+      && liveVideoList.value[liveVideoList.value.length - 1]?.item?.live_status === 1
+    ) {
       getLiveVideoList()
     }
   }

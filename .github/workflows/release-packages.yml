@@ -47,8 +47,27 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  ffmpeg-windows:
+    name: FFmpeg for Windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install MinGW
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mingw-w64 pkg-config
+      # LGPL FFmpeg + LAME from pinned upstream sources; see the script header.
+      - name: Build FFmpeg
+        run: bash scripts/toolchain/build-ffmpeg.sh win32-x64 dist/toolchain/ffmpeg/win32-x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-win32-x64
+          path: dist/toolchain/ffmpeg/win32-x64/
+          if-no-files-found: error
+          retention-days: 7
+
   windows:
     name: Windows connector package
+    needs: ffmpeg-windows
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -56,6 +75,13 @@ jobs:
       - name: Build release host
         working-directory: rust
         run: cargo build --release -p bewly-host
+      - name: Fetch FFmpeg
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download $env:GITHUB_RUN_ID --name ffmpeg-win32-x64 --dir dist/toolchain/ffmpeg/win32-x64
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg artifact download failed' }
       - name: Build MSIX
         shell: pwsh
         run: |
@@ -119,6 +145,8 @@ jobs:
         run: |
           mkdir -p artifacts
           gh run download "$GITHUB_RUN_ID" --dir artifacts --pattern '*' || true
+          # FFmpeg is already inside the MSIX; its build artifact is not a release asset.
+          rm -rf artifacts/ffmpeg-*
           # `gh run download` nests one directory per artifact; flatten it.
           find artifacts -mindepth 2 -type f -exec mv -t artifacts {} +
           find artifacts -mindepth 1 -type d -empty -delete

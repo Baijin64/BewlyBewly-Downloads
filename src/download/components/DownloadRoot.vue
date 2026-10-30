@@ -38,6 +38,24 @@ const toolbar = createVideoToolbarDownload({
   onDownload: () => openVideoDownload(location.href),
   accentColor: () => settings.value.themeColor,
 })
+const target = ref<HTMLElement | null>(null)
+
+function syncMountPosition(targetEl?: HTMLElement | null, rect?: { left: number, width: number }, nextMarginLeft = '', nextMarginRight = '', nextDisplay = '') {
+  const el = targetEl ?? target.value
+  if (!el)
+    return
+  if (rect) {
+    void rect.left
+    void rect.width
+  }
+  if (el.style.marginLeft !== nextMarginLeft)
+    el.style.marginLeft = nextMarginLeft
+  if (el.style.marginRight !== nextMarginRight)
+    el.style.marginRight = nextMarginRight
+  if (el.style.display !== nextDisplay)
+    el.style.display = nextDisplay
+}
+
 async function updateCount() {
   if (!topFrame || readingCount || document.hidden)
     return
@@ -82,6 +100,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('bewly-download-changed', updateCount)
   document.removeEventListener('visibilitychange', updateCount)
 })
+defineExpose({ syncMountPosition, target })
 </script>
 
 <template>

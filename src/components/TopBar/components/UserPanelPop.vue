@@ -67,12 +67,22 @@ const otherLinks = computed((): { name: string, url: string, icon: string }[] =>
   ]
 })
 
-const levelProgressBarWidth = computed(() => {
+function getExpProgressWidth(): string {
+  if (!props.userInfo?.level_info)
+    return '0%'
+
   const { next_exp: nextExp, current_exp: currentExp } = props.userInfo.level_info
 
-  const percentage = (currentExp / nextExp) * 100
+  if (String(nextExp) === '--' || Number.isNaN(Number(nextExp)) || Number(nextExp) === 0)
+    return currentExp > 0 ? '100%' : '0%'
+
+  const percentage = (Number(currentExp) / Number(nextExp)) * 100
+  if (Number.isNaN(percentage))
+    return '0%'
   return `${percentage.toFixed(2)}%`
-})
+}
+
+const levelProgressBarWidth = computed(() => getExpProgressWidth())
 
 const userStat = reactive<UserStat>({} as UserStat)
 

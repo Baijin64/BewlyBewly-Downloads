@@ -9,11 +9,14 @@ use std::time::Duration;
 use bewly_core::ids::{is_short_link, video_id, USER_AGENT};
 use serde_json::{json, Value};
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .redirects(0)
-        .timeout(Duration::from_secs(20))
-        .build()
+fn agent() -> &'static ureq::Agent {
+    static SHARED_AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    SHARED_AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .redirects(0)
+            .timeout(Duration::from_secs(20))
+            .build()
+    })
 }
 
 fn base() -> String {
@@ -23,6 +26,43 @@ fn base() -> String {
 fn member_base() -> String {
     std::env::var("BEWLY_MEMBER_API_BASE")
         .unwrap_or_else(|_| "https://member.bilibili.com".to_string())
+}
+
+fn anonymous_buvid() -> &'static str {
+    static BUVID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BUVID.get_or_init(|| {
+        let b = base();
+        if !b.starts_with("https://api.bilibili.com") {
+            return "buvid3=test-buvid3; buvid4=test-buvid4".to_string();
+        }
+        let endpoint = format!("{}/x/frontend/finger/spi", b.trim_end_matches('/'));
+        let res = agent()
+            .get(&endpoint)
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", "https://www.bilibili.com/")
+            .call()
+            .ok()
+            .and_then(|r| r.into_json::<Value>().ok());
+        if let Some(json) = res {
+            let b3 = json.pointer("/data/b_3").and_then(Value::as_str);
+            let b4 = json.pointer("/data/b_4").and_then(Value::as_str);
+            if let (Some(b3), Some(b4)) = (b3, b4) {
+                return format!("buvid3={b3}; buvid4={b4}");
+            }
+        }
+        "buvid3=C82ADCA2-E9FD-7889-4E24-BE2C8C0A1E9E16237infoc".to_string()
+    })
+}
+
+pub fn with_buvid(cookie: &str) -> String {
+    let trimmed = cookie.trim();
+    if trimmed.is_empty() {
+        anonymous_buvid().to_string()
+    } else if !trimmed.contains("buvid3") {
+        format!("{trimmed}; {}", anonymous_buvid())
+    } else {
+        trimmed.to_string()
+    }
 }
 
 pub fn fetch_join_time(cookie: &str) -> Result<i64, String> {
@@ -133,20 +173,27 @@ pub fn inspect(value: &str, cookie: &str) -> Result<Value, String> {
     } else {
         format!("bvid={id}")
     };
-    let endpoint = format!(
+    let wbi_endpoint = format!(
+        "{}/x/web-interface/wbi/view?{query}",
+        base().trim_end_matches('/')
+    );
+    let view_endpoint = format!(
         "{}/x/web-interface/view?{query}",
         base().trim_end_matches('/')
     );
-    let mut request = agent()
-        .get(&endpoint)
-        .set("User-Agent", USER_AGENT)
-        .set("Referer", "https://www.bilibili.com/");
-    if !cookie.is_empty() {
-        request = request.set("Cookie", cookie);
-    }
-    let response = request
-        .call()
-        .map_err(|error| format!("B 站接口请求失败（{error}）"))?;
+    let cookie_header = with_buvid(cookie);
+    let send = |endpoint: &str| {
+        agent()
+            .get(endpoint)
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", "https://www.bilibili.com/")
+            .set("Cookie", &cookie_header)
+            .call()
+    };
+    let response = match send(&wbi_endpoint) {
+        Ok(resp) if resp.status() == 200 => resp,
+        _ => send(&view_endpoint).map_err(|error| format!("B 站接口请求失败（{error}）"))?,
+    };
     if response.status() != 200 {
         return Err(format!("B 站接口请求失败（HTTP {}）", response.status()));
     }
@@ -249,13 +296,12 @@ fn wbi_keys(cookie: &str) -> Result<(String, String), String> {
         }
     }
     let endpoint = format!("{}/x/web-interface/nav", base().trim_end_matches('/'));
-    let mut request = agent()
+    let cookie_header = with_buvid(cookie);
+    let request = agent()
         .get(&endpoint)
         .set("User-Agent", USER_AGENT)
-        .set("Referer", "https://www.bilibili.com/");
-    if !cookie.is_empty() {
-        request = request.set("Cookie", cookie);
-    }
+        .set("Referer", "https://www.bilibili.com/")
+        .set("Cookie", &cookie_header);
     let body: Value = request
         .call()
         .map_err(|error| format!("B 站导航接口请求失败（{error}）"))?
@@ -288,12 +334,16 @@ pub fn resolve(
     let (img, sub) = wbi_keys(cookie)?;
     let mixin = crate::wbi::mixin_key(&img, &sub);
     let timestamp = time::OffsetDateTime::now_utc().unix_timestamp();
+    let use_durl = bewly_media::ffmpeg().is_none()
+        && outputs.iter().any(|kind| kind == "video")
+        && !outputs.iter().any(|kind| kind == "audio" || kind == "silent" || kind == "mp3");
+    let fnval = if use_durl { "1" } else { "4048" };
     let query = crate::wbi::sign(
         &[
             ("bvid", bvid.to_string()),
             ("cid", cid.to_string()),
             ("qn", (if quality == 0 { 127 } else { quality }).to_string()),
-            ("fnval", "4048".into()),
+            ("fnval", fnval.into()),
             ("fnver", "0".into()),
             ("fourk", "1".into()),
         ],
@@ -304,13 +354,12 @@ pub fn resolve(
         "{}/x/player/wbi/playurl?{query}",
         base().trim_end_matches('/')
     );
-    let mut request = agent()
+    let cookie_header = with_buvid(cookie);
+    let request = agent()
         .get(&endpoint)
         .set("User-Agent", USER_AGENT)
-        .set("Referer", "https://www.bilibili.com/");
-    if !cookie.is_empty() {
-        request = request.set("Cookie", cookie);
-    }
+        .set("Referer", "https://www.bilibili.com/")
+        .set("Cookie", &cookie_header);
     let body: Value = request
         .call()
         .map_err(|error| format!("B 站播放接口请求失败（{error}）"))?

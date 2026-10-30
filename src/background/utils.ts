@@ -71,7 +71,7 @@ function apiListenerFactory(API_MAP: APIMAP) {
 
     // eslint-disable-next-line node/prefer-global/process
     if (process.env.FIREFOX && sender && sender.tab && sender.tab.cookieStoreId) {
-      const cookies = await browser.cookies.getAll({ storeId: sender.tab.cookieStoreId })
+      const cookies = await browser.cookies.getAll({ storeId: sender.tab.cookieStoreId, domain: 'bilibili.com' })
       return doRequest(message, api, sendResponse, cookies)
     }
 

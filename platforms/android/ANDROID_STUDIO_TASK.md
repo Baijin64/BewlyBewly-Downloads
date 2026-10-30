@@ -255,6 +255,14 @@ cargo ndk -t x86_64 -o platforms/android/app/src/main/jniLibs build --release -p
 - `platforms/android/app/src/main/jniLibs/arm64-v8a/libbewly_android.so`
 - `platforms/android/app/src/main/jniLibs/x86_64/libbewly_android.so`
 
+#### 步骤 3.3: 内置 FFmpeg
+合流、提取音频和转 MP3 需要 FFmpeg。Android 10 起应用只能执行原生库目录里的文件，所以它以 `libffmpeg.so` 的名字和 Rust 库放在一起，`build.gradle.kts` 用 `useLegacyPackaging` 让安装器解压出来，`BewlyDownloadService` 启动时把路径写进 `BEWLY_FFMPEG`。
+```bash
+# 需要 Docker；Linux NDK 与源码缓存在 ~/.cache/bewly-toolchain
+bash scripts/toolchain/build-ffmpeg-docker.sh android-arm64 android-x86_64
+```
+产出物会放到 `jniLibs/arm64-v8a/libffmpeg.so` 与 `jniLibs/x86_64/libffmpeg.so`。缺少时服务仍可运行，但只能下载音画合一的低画质文件。
+
 ---
 
 ### Task 4: 在 `platforms/android/` 下建立最小可运行宿主工程与验证测试

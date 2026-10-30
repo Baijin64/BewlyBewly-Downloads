@@ -67,7 +67,7 @@ const handleInput = useDebounceFn(() => {
       .then((res: SuggestionResponse) => {
         if (!res || (res && res.code !== 0))
           return
-        Object.assign(suggestions, res.result.tag)
+        suggestions.splice(0, suggestions.length, ...(res.result?.tag ?? []))
       })
   }
   else {

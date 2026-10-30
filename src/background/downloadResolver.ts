@@ -40,7 +40,14 @@ export async function inspectDownload(value: unknown): Promise<DownloadVideo> {
     value = reply.result
   }
   const id = parseDownloadId(value)
-  const info = await biliApi('/x/web-interface/view', id.startsWith('av') ? { aid: id.slice(2) } : { bvid: id })
+  const params: Record<string, string> = id.startsWith('av') ? { aid: id.slice(2) } : { bvid: id }
+  let info: any
+  try {
+    info = await biliApi('/x/web-interface/wbi/view', params)
+  }
+  catch {
+    info = await biliApi('/x/web-interface/view', params)
+  }
   const collection = info.ugc_season
     ? {
         id: info.ugc_season.id,
@@ -104,7 +111,10 @@ export async function resolveDownload(bvid: string, cid: number, options: Downlo
   const videos: any[] = data.dash?.video || []
   const codecs = { avc: 7, hevc: 12, av1: 13 }
   const candidates = videos.filter(v => options.codec === 'auto' || v.codecid === codecs[options.codec])
-  const quality = options.quality || Math.max(...candidates.map(v => v.id))
+  const fallbackQuality = candidates.length > 0
+    ? Math.max(...candidates.map((item: any) => Number(item.id || 0)))
+    : Number(options.quality || 80)
+  const quality = options.quality || fallbackQuality
   const video = candidates.filter(v => v.id === quality).sort((a, b) => b.bandwidth - a.bandwidth)[0]
   const audios = [...(data.dash?.audio || []), ...(data.dash?.dolby?.audio || []), ...(data.dash?.flac?.audio ? [data.dash.flac.audio] : [])]
   const audio = selectAudio<any>(audios.filter(a => a.baseUrl || a.base_url), options.audioQuality)

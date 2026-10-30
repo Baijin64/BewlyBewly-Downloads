@@ -27,7 +27,7 @@ const error = ref('')
 const message = ref('')
 const preview = ref('')
 const busy = ref(false)
-const controller = new AbortController()
+let controller: AbortController | null = null
 let previewTimer: ReturnType<typeof setTimeout> | undefined
 const featureLabels: Record<
   HelperSettings['features'] extends Record<infer K, boolean> ? K : never,
@@ -87,14 +87,24 @@ async function save() {
 async function pickDirectory() {
   busy.value = true
   error.value = ''
+  controller?.abort()
+  controller = new AbortController()
   try {
     const path = await pickLocalFile(
       'directory',
       form.value?.directory,
       controller.signal,
     )
-    if (path && form.value)
-      form.value.directory = path
+    if (path && form.value && path !== form.value.directory) {
+      // A picked folder takes effect right away. Only the directory is sent, so
+      // other edits on this page still wait for the save button.
+      const saved = await downloadRequest<HelperSettings>('configure', { directory: path })
+      form.value.directory = saved.directory
+      if (helper.value)
+        helper.value.settings = { ...helper.value.settings, directory: saved.directory }
+      message.value = '保存目录已更新，新加入的任务会保存到这里。'
+      window.dispatchEvent(new Event('bewly-download-settings-changed'))
+    }
   }
   catch (err) {
     error.value = String((err as Error).message)
@@ -103,6 +113,7 @@ async function pickDirectory() {
     busy.value = false
   }
 }
+const chooseDefaultDir = pickDirectory
 async function openDirectory() {
   try {
     await downloadRequest('taskFile', { action: 'folder' })
@@ -149,9 +160,10 @@ watch(
 )
 onMounted(() => connect(new URL(location.href).searchParams.get('downloadConnect') === '1'))
 onBeforeUnmount(() => {
-  controller.abort()
+  controller?.abort()
   clearTimeout(previewTimer)
 })
+defineExpose({ chooseDefaultDir, pickDirectory })
 </script>
 
 <template>

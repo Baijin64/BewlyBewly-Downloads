@@ -2,11 +2,12 @@ import browser from 'webextension-polyfill'
 
 import { helperInstallHint, helperStartHint, helperUpdateHint } from '../download/platform'
 import type { DownloadMethod, DownloadOptions, DownloadReply, DownloadTask, HelperStatus } from '../download/types'
-import { cachedHealth, cachedPreview, cachedTasks, downloadSnapshot, helperConnected, markHelperOffline, rememberReply } from './downloadCache'
+import { cachedHealth, cachedPreview, cachedTasks, cachedWorkInProgress, downloadSnapshot, helperConnected, markHelperOffline, rememberReply } from './downloadCache'
 import { biliApi, inspectDownload, inspectFormats, inspectQualities, inspectSubtitles, resolveDownload } from './downloadResolver'
-import { requestNativeDownload } from './nativeDownloadClient'
+import { requestNativeDownload, requestNativeDownloadDetached } from './nativeDownloadClient'
 
 const methods = new Set<DownloadMethod>(['authorizeStart', 'health', 'inspect', 'inspectSubtitles', 'inspectQualities', 'inspectFormats', 'createTasks', 'stageTasks', 'listTasks', 'queryTasks', 'taskAction', 'batchAction', 'configure', 'previewPath', 'taskFile', 'tool', 'migrationPreview', 'migrationImport'])
+const idempotentMethods = new Set<string>(['health', 'capabilities', 'queryTasks', 'getTask', 'getSettings', 'listTools', 'listTasks', 'inspect', 'inspectSubtitles', 'inspectQualities', 'inspectFormats', 'previewPath', 'migrationPreview'])
 const cookieNames = new Set(['SESSDATA', 'bili_jct', 'DedeUserID', 'DedeUserID__ckMd5', 'buvid3', 'buvid4'])
 const consentKey = 'bewly-native-autostart'
 let initializing: Promise<void> | undefined
@@ -27,6 +28,25 @@ function initializeCache() {
   return initializing
 }
 const startRequired = (): DownloadReply<never> => ({ ok: false, code: 'HELPER_START_REQUIRED', error: '需要启动本地下载助手' })
+// While the last known state shows running work, a poll still asks the helper
+// (without waking it) instead of serving the cache forever. An offline answer
+// carries the helper's last snapshot, so finished tasks still show up. A helper
+// that stopped mid-download leaves that snapshot unchanged, so after a few
+// offline answers in a row the list waits for the user to reconnect.
+const OFFLINE_PROBE_LIMIT = 3
+let lastOfflineProbe = 0
+let offlineProbeDelay = 5000
+let offlineProbes = 0
+async function shouldProbeHelper() {
+  if (offlineProbes >= OFFLINE_PROBE_LIMIT || Date.now() - lastOfflineProbe < offlineProbeDelay || !await cachedWorkInProgress())
+    return false
+  lastOfflineProbe = Date.now()
+  return true
+}
+function recordProbe(online: boolean) {
+  offlineProbes = online ? 0 : offlineProbes + 1
+  offlineProbeDelay = online ? 5000 : 30000
+}
 async function nativeRequest(method: DownloadMethod | 'expandLink', params: Record<string, unknown>, allowStart: boolean, session?: string): Promise<DownloadReply<any>> {
   if (allowStart) {
     const boot = await requestNativeDownload({ method: 'bootstrapStatus' }) as DownloadReply<{ connectorVersion: string, runtime: { ready: boolean, reason?: string } }>
@@ -40,7 +60,7 @@ async function nativeRequest(method: DownloadMethod | 'expandLink', params: Reco
   }
   const message = { method, params, allowStart, ...(session === undefined ? {} : { session }) }
   let reply = await requestNativeDownload(message)
-  if (!reply.ok && reply.code === 'SERVICE_OFFLINE' && allowStart)
+  if (!reply.ok && reply.code === 'SERVICE_OFFLINE' && allowStart && idempotentMethods.has(method))
     reply = await requestNativeDownload(message)
   await rememberReply(method, reply, params)
   if (!reply.ok && ['SERVICE_OFFLINE', 'SERVICE_STOPPING'].includes(reply.code || ''))
@@ -82,13 +102,17 @@ async function handle(message: { method: DownloadMethod, params: Record<string, 
     if (message.method === 'previewPath')
       return { ok: true, result: await cachedPreview(params) }
     if (['health', 'queryTasks', 'listTasks'].includes(message.method)) {
-      if (helperConnected() || params.connect === true) {
+      if (helperConnected() || params.connect === true || await shouldProbeHelper()) {
         try {
           const reply = await nativeRequest(message.method, params, false)
+          recordProbe(reply.ok)
           if (reply.ok)
             return message.method === 'health' ? { ...reply, result: { ...(reply.result as HelperStatus), runtime: reply.runtime, deferred: false } } : reply
         }
-        catch { markHelperOffline() }
+        catch {
+          markHelperOffline()
+          recordProbe(false)
+        }
         if (params.connect === true) {
           try {
             await rememberReply('uiSnapshot', await requestNativeDownload({ method: 'uiSnapshot' }))
@@ -137,6 +161,11 @@ async function handle(message: { method: DownloadMethod, params: Record<string, 
     const allowStart = allowedValue === 'true' || allowedValue === true
     if (!helperConnected() && !allowStart)
       return startRequired()
+    if (message.method === 'tool' && params.op === 'pick') {
+      // The picker stays open until the user chooses, so it cannot share the 15-second queue.
+      const reply = await requestNativeDownloadDetached({ method: 'tool', params, allowStart }, 10 * 60_000)
+      return !reply.ok && ['SERVICE_OFFLINE', 'SERVICE_STOPPING'].includes(reply.code || '') ? startRequired() : reply
+    }
     if (message.method === 'createTasks' || message.method === 'stageTasks') {
       const info = await inspectDownload(params.video)
       const cids = params.cids as number[]
@@ -164,8 +193,24 @@ async function handle(message: { method: DownloadMethod, params: Record<string, 
     let session: string | undefined
     if (['createTasks', 'stageTasks', 'batchAction'].includes(message.method) || (message.method === 'taskAction' && ['start', 'resume', 'retry'].includes(String(params.action)))) {
       // Only the Bilibili session needed for the user-initiated download leaves the browser.
-      const cookies = await browser.cookies.getAll({ domain: 'bilibili.com' })
-      session = cookies.filter(cookie => cookieNames.has(cookie.name)).map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+      const cookieQuery: browser.Cookies.GetAllDetailsType = { domain: 'bilibili.com' }
+      if (sender?.tab?.cookieStoreId)
+        cookieQuery.storeId = sender.tab.cookieStoreId
+      const cookies = await browser.cookies.getAll(cookieQuery)
+      const seen = new Map<string, browser.Cookies.Cookie>()
+      for (const cookie of cookies.filter(cookie => cookieNames.has(cookie.name))) {
+        const existing = seen.get(cookie.name)
+        if (!existing) {
+          seen.set(cookie.name, cookie)
+        }
+        else {
+          const existingScore = (existing.domain?.length || 0) + (existing.path?.length || 0)
+          const currentScore = (cookie.domain?.length || 0) + (cookie.path?.length || 0)
+          if (currentScore > existingScore)
+            seen.set(cookie.name, cookie)
+        }
+      }
+      session = Array.from(seen.values()).map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
     }
     return await nativeRequest(message.method, params, allowStart, session)
   }

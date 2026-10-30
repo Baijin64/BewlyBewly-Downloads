@@ -6,11 +6,7 @@
 
 ## 当前状态（预览版）
 
-下载助手已经由 Rust 重写，不再需要 Node.js，也不再随包携带 aria2 与 FFmpeg。合流（把 DASH 的视频流和音频流合成 mp4/mkv）仍依赖 FFmpeg，而内置 libav 尚未接入，因此**预览版能解析、入队、分片下载和续传，但最后一步合流会明确报错**：
-
-> 媒体合并需要 FFmpeg，当前安装未包含该组件
-
-不想看到这个错误，可以把 `ffmpeg.exe` 放到连接器安装目录的 `bin\` 子目录，或设置环境变量 `BEWLY_FFMPEG` 指向它。等 libav 接入后这个前置条件会消失。
+下载助手已经由 Rust 重写，不再需要 Node.js，也不再携带 aria2。安装包内置精简版 FFmpeg（LGPL，`bin\ffmpeg.exe`），用于合流（把 DASH 的视频流和音频流合成 mp4/mkv）、提取音频和转 MP3，不需要另外安装。想换用自己的 FFmpeg，可以设置环境变量 `BEWLY_FFMPEG` 指向它。
 
 ## 获取文件
 
@@ -40,7 +36,7 @@ CRX 签名和固定 ID 已检查，但本项目尚未通过 Chrome Web Store/Edg
 
 网页下载界面可直接打开，配置与最近记录使用本地快照，不为查看界面启动下载服务。实际执行下载、入队、修改本地配置或文件操作时才唤起；没有正在处理的任务后约 5 秒自动退出，托盘与下载引擎一起结束。Windows 手动启动默认常驻，退出安装后的首次手动会话后即可按需使用。设置中可撤回自动唤起许可；查看历史时的“刷新”只连接已经运行的助手。详见 [启动与退出规则](DOWNLOAD-LIFECYCLE.md)。
 
-连接器的宿主进程是 `BewlyDownloadHost.exe`（Rust，约 3.6 MB），托盘是 `BewlyDownloadTray.exe`（C#，NativeAOT）。两者通过本机回环 RPC 通信，托盘只是客户端。MSIX 约 8.4 MiB，安装后约 40 MiB；上一代随包携带 aria2 与 FFmpeg 时为 27.6 MiB。
+连接器的宿主进程是 `BewlyDownloadHost.exe`（Rust，约 3.6 MB），托盘是 `BewlyDownloadTray.exe`（C#，NativeAOT）。两者通过本机回环 RPC 通信，托盘只是客户端。合流与转 MP3 由包内的 `bin\ffmpeg.exe` 完成。
 
 ## 更新与验证范围
 

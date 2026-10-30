@@ -36,6 +36,13 @@ export interface BilibiliStorageEvent {
   value: string
 }
 
+export function parseSearchHistoryFromHtml(html: string): string[] {
+  const match = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)
+  if (!match?.[1])
+    return []
+  return match[1].split(',')
+}
+
 class BilibiliStorageProvider {
   static BILIBILI_HISTORY_KEY = 'search_history:search_history'
 
@@ -46,6 +53,11 @@ class BilibiliStorageProvider {
   private async operate(type: 'COLS_CLR'): Promise<void>
   private async operate(type: 'COLS_GET' | 'COLS_CLR' | 'COLS_SET', value?: string) {
     const iframe = this.iframe.value
+    if (!iframe || !iframe.contentWindow) {
+      if (type === 'COLS_GET')
+        return { type: 'COLS_RES', key: BilibiliStorageProvider.BILIBILI_HISTORY_KEY, value: '[]' }
+      return
+    }
 
     switch (type) {
       case 'COLS_GET':

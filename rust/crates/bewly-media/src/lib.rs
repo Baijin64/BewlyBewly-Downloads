@@ -48,6 +48,30 @@ pub fn ffmpeg() -> Option<PathBuf> {
     candidate_paths().into_iter().find(|path| path.is_file())
 }
 
+/// The service has no console of its own, so on Windows a console child would
+/// open a window of its own for every mux; CREATE_NO_WINDOW keeps it hidden.
+fn tool_command(tool: &Path) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(tool);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command
+}
+
+/// Whether the file is ISO base media (MP4 / fragmented MP4), judged by its
+/// first box. FLV and other containers must not be renamed to `.mp4`.
+fn is_mp4_family(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 8];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut head))
+        .map(|_| matches!(&head[4..8], b"ftyp" | b"styp" | b"moov" | b"moof" | b"sidx"))
+        .unwrap_or(false)
+}
+
 /// Remuxes the given inputs with `-c copy`, matching the Node implementation.
 pub fn remux(
     video: Option<&Path>,
@@ -56,10 +80,28 @@ pub fn remux(
     container: &str,
     faststart: bool,
 ) -> Result<(), MediaError> {
-    let tool = ffmpeg().ok_or(MediaError::MissingTool)?;
     if output.exists() {
         return Err(MediaError::Exists);
     }
+    let tool = match ffmpeg() {
+        Some(t) => t,
+        None => {
+            // Without FFmpeg a single input can still be kept as is, but only
+            // when it already is the container the output name promises.
+            let single = match (video, audio) {
+                (Some(v), None) | (None, Some(v)) => Some(v),
+                (Some(v), Some(a)) if v == a => Some(v),
+                _ => None,
+            };
+            match single {
+                Some(source) if matches!(container, "mp4" | "m4a") && is_mp4_family(source) => {
+                    std::fs::copy(source, output).map_err(|e| MediaError::Io(e.to_string()))?;
+                    return Ok(());
+                }
+                _ => return Err(MediaError::MissingTool),
+            }
+        }
+    };
     let temporary = output.with_file_name(format!(
         ".bewly-mux-{}.part.{}",
         std::process::id(),
@@ -70,7 +112,7 @@ pub fn remux(
     ));
     let _ = std::fs::remove_file(&temporary);
 
-    let mut command = Command::new(tool);
+    let mut command = tool_command(&tool);
     command.args(["-hide_banner", "-nostdin", "-y"]);
     if let Some(video) = video {
         command.arg("-i").arg(video);
@@ -121,7 +163,7 @@ pub fn transcode_mp3(audio: &Path, output: &Path) -> Result<(), MediaError> {
     }
     let temporary = output.with_file_name(format!(".bewly-mp3-{}.part.mp3", std::process::id()));
     let _ = std::fs::remove_file(&temporary);
-    let result = Command::new(tool)
+    let result = tool_command(&tool)
         .args(["-hide_banner", "-nostdin", "-y", "-i"])
         .arg(audio)
         .args([
@@ -166,5 +208,19 @@ mod tests {
         let mp3_result = transcode_mp3(Path::new("in.m4a"), Path::new("out.mp3"));
         assert!(matches!(mp3_result, Err(MediaError::MissingTool)));
         std::env::remove_var("BEWLY_FFMPEG");
+    }
+
+    #[test]
+    fn recognises_mp4_but_not_flv_by_the_first_box() {
+        let directory = std::env::temp_dir().join(format!("bewly-media-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mp4 = directory.join("a.m4s");
+        let flv = directory.join("b.flv");
+        std::fs::write(&mp4, b"\0\0\0\x18ftypiso5\0\0\0\0").unwrap();
+        std::fs::write(&flv, b"FLV\x01\x05\0\0\0\x09").unwrap();
+        assert!(is_mp4_family(&mp4));
+        assert!(!is_mp4_family(&flv));
+        assert!(!is_mp4_family(&directory.join("missing")));
+        let _ = std::fs::remove_dir_all(&directory);
     }
 }

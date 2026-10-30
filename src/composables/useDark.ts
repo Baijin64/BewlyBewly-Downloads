@@ -1,8 +1,9 @@
 import { usePreferredDark } from '@vueuse/core'
+import { onScopeDispose } from 'vue'
 
 import { settings } from '~/logic'
 import { runWhenIdle } from '~/utils/lazyLoad'
-import { setCookie } from '~/utils/main'
+import { isInIframe, setCookie } from '~/utils/main'
 import { executeTimes } from '~/utils/timer'
 
 export function useDark() {
@@ -17,6 +18,13 @@ export function useDark() {
   const isDark = computed(() => currentAppColorScheme.value === 'dark')
   let themeChangeTimer: NodeJS.Timeout | null = null
 
+  onScopeDispose(() => {
+    if (themeChangeTimer) {
+      clearInterval(themeChangeTimer)
+      themeChangeTimer = null
+    }
+  })
+
   // Watch for changes in the 'settings.value.theme' variable and add the 'dark' class to the 'mainApp' element
   // to prevent some Unocss dark-specific styles from failing to take effect
   watch(
@@ -27,33 +35,35 @@ export function useDark() {
     { immediate: true },
   )
 
-  // use watchEffect instead of onMounted because onMounted is only aviailable in setup function
-  watchEffect(() => {
+  // `isDark` is read here rather than inside the idle callback so a theme switch re-runs it
+  watch(isDark, (dark) => {
     // Because some shadow dom may not be loaded when the page has already loaded, we need to wait until the page is idle
     runWhenIdle(() => {
-      if (isDark.value) {
-        setCookie('theme_style', 'dark', 365 * 10)
-        // TODO: find a better way implement this
-        themeChangeTimer = executeTimes(() => {
-          window.dispatchEvent(new CustomEvent('global.themeChange', { detail: 'dark' }))
-        }, 10, 500)
+      if (themeChangeTimer) {
+        clearInterval(themeChangeTimer)
+        themeChangeTimer = null
       }
-      else {
-        setCookie('theme_style', 'light', 365 * 10)
-        themeChangeTimer = executeTimes(() => {
-          window.dispatchEvent(new CustomEvent('global.themeChange', { detail: 'light' }))
-        }, 10, 500)
-      }
+      const theme = dark ? 'dark' : 'light'
+      // The cookie is shared, so only the top frame writes it. The event is
+      // window-local, so every frame, the drawer's player included, needs its own.
+      if (!isInIframe())
+        setCookie('theme_style', theme, 365 * 10)
+      // TODO: find a better way implement this
+      themeChangeTimer = executeTimes(() => {
+        window.dispatchEvent(new CustomEvent('global.themeChange', { detail: theme }))
+      }, 3, 500)
     })
-  })
+  }, { immediate: true })
 
   /**
    * Watch for changes in the 'settings.value.theme' variable and add the 'dark' class to the 'mainApp' element
    * to prevent some Unocss dark-specific styles from failing to take effect
    */
   function setAppAppearance() {
-    if (themeChangeTimer)
+    if (themeChangeTimer) {
       clearInterval(themeChangeTimer)
+      themeChangeTimer = null
+    }
 
     if (isDark.value) {
       document.querySelector('#bewly')?.classList.add('dark')
@@ -64,7 +74,8 @@ export function useDark() {
       // bili_dark is bilibili's official dark mode class
       document.documentElement.classList.add('bili_dark')
 
-      setCookie('theme_style', 'dark', 365 * 10)
+      if (!isInIframe())
+        setCookie('theme_style', 'dark', 365 * 10)
       window.dispatchEvent(new CustomEvent('global.themeChange', { detail: 'dark' }))
     }
     else {
@@ -75,7 +86,8 @@ export function useDark() {
       })
       document.documentElement.classList.remove('bili_dark')
 
-      setCookie('theme_style', 'light', 365 * 10)
+      if (!isInIframe())
+        setCookie('theme_style', 'light', 365 * 10)
       window.dispatchEvent(new CustomEvent('global.themeChange', { detail: 'light' }))
     }
 

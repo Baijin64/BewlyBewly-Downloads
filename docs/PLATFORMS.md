@@ -56,7 +56,7 @@ npx esno scripts/build-helper.ts --target darwin-arm64  # 必须在 macOS 上运
 
 暂存目录已存在时构建会拒绝覆盖，需显式加 `--clean` 或使用 `--out <dir>`。
 
-媒体传输与合流已由 Rust 实现，不再依赖 aria2 或 FFmpeg 可执行文件；macOS/Linux 的打包脚本仍在沿用已退役的 Node 目录结构（`launcher.sh`、`fetch-node.sh`、`node_modules` 裁剪），重写前不能产出可安装包。
+媒体传输已由 Rust 实现，不再依赖 aria2；合流与转 MP3 使用内置 FFmpeg，`scripts/toolchain/build-ffmpeg.sh` 也支持 linux-x64 与 darwin 目标。macOS/Linux 的打包脚本仍在沿用已退役的 Node 目录结构（`launcher.sh`、`fetch-node.sh`、`node_modules` 裁剪），重写前不能产出可安装包。
 
 
 ## 已知限制

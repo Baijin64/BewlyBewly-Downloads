@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.system.Os
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
@@ -36,6 +37,7 @@ class BewlyDownloadService : Service() {
                 startForegroundNotification()
                 val dataDir = filesDir.absolutePath
                 val mode = intent?.getStringExtra(EXTRA_MODE) ?: "service"
+                exposeBundledFfmpeg()
                 Thread {
                     val ok = BewlyNative.startService(dataDir, mode)
                     Log.i(TAG, "BewlyNative service started: $ok (dataDir=$dataDir, mode=$mode)")
@@ -50,14 +52,20 @@ class BewlyDownloadService : Service() {
     }
 
     fun getConnectionInfo(): JSONObject? {
-        val connFile = File(filesDir, "connection.json")
-        if (!connFile.exists()) return null
-        return try {
-            val text = connFile.readText()
-            JSONObject(text)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to read connection.json", e)
-            null
+        return getConnectionInfo(this)
+    }
+
+    /**
+     * FFmpeg ships as libffmpeg.so so the installer extracts it to the native library
+     * directory, the only app location Android 10+ lets a process execute from. The
+     * Rust core runs in this process and reads its path from BEWLY_FFMPEG.
+     */
+    private fun exposeBundledFfmpeg() {
+        val ffmpeg = File(applicationInfo.nativeLibraryDir, "libffmpeg.so")
+        if (ffmpeg.isFile) {
+            Os.setenv("BEWLY_FFMPEG", ffmpeg.absolutePath, true)
+        } else {
+            Log.w(TAG, "Bundled FFmpeg missing at ${ffmpeg.absolutePath}; muxing falls back to single-file streams")
         }
     }
 
@@ -95,6 +103,18 @@ class BewlyDownloadService : Service() {
         const val ACTION_START = "io.bewly.download.action.START"
         const val ACTION_STOP = "io.bewly.download.action.STOP"
         const val EXTRA_MODE = "io.bewly.download.extra.MODE"
+
+        fun getConnectionInfo(context: Context): JSONObject? {
+            val connFile = File(context.filesDir, "connection.json")
+            if (!connFile.exists()) return null
+            return try {
+                val text = connFile.readText()
+                JSONObject(text)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to read connection.json", e)
+                null
+            }
+        }
 
         fun start(context: Context, mode: String = "service") {
             val intent = Intent(context, BewlyDownloadService::class.java).apply {

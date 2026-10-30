@@ -47,28 +47,40 @@ onMounted(() => {
   initData()
 })
 
+function handleScroll() {
+  // When you scroll to the bottom, they will automatically
+  // add the next page of data to the history list
+  if (
+    favoriteVideosWrap.value
+    && favoriteVideosWrap.value.clientHeight
+    + favoriteVideosWrap.value.scrollTop
+    >= favoriteVideosWrap.value.scrollHeight - 20
+    && favoriteResources.length > 0
+    && !isLoading.value
+  ) {
+    if (activatedMediaId.value && !noMoreContent.value) {
+      currentPageNum.value++
+      getFavoriteResources()
+    }
+  }
+}
+
+onBeforeUnmount(() => {
+  if (favoriteVideosWrap.value) {
+    favoriteVideosWrap.value.removeEventListener('scroll', handleScroll)
+  }
+})
+
 async function initData() {
   await getFavoriteCategories()
+  if (!favoriteCategories.length)
+    return
   activatedMediaId.value = favoriteCategories[0].id
   activatedFavoriteTitle.value = favoriteCategories[0].title
 
   if (favoriteVideosWrap.value) {
-    favoriteVideosWrap.value.addEventListener('scroll', () => {
-      // When you scroll to the bottom, they will automatically
-      // add the next page of data to the history list
-      if (
-        favoriteVideosWrap.value.clientHeight
-        + favoriteVideosWrap.value.scrollTop
-        >= favoriteVideosWrap.value.scrollHeight - 20
-        && favoriteResources.length > 0
-        && !isLoading.value
-      ) {
-        if (activatedMediaId.value && !noMoreContent.value) {
-          currentPageNum.value++
-          getFavoriteResources()
-        }
-      }
-    })
+    favoriteVideosWrap.value.removeEventListener('scroll', handleScroll)
+    favoriteVideosWrap.value.addEventListener('scroll', handleScroll)
   }
 }
 

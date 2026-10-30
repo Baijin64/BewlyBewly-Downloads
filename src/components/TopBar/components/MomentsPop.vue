@@ -64,18 +64,28 @@ watch(() => selectedMomentTab.value.type, (newVal, oldVal) => {
   initData()
 }, { immediate: true })
 
+function handleScroll() {
+  if (
+    momentsWrap.value
+    && momentsWrap.value.clientHeight + momentsWrap.value.scrollTop
+    >= momentsWrap.value.scrollHeight - 20
+    && moments.length > 0
+    && !isLoading.value
+  ) {
+    getData()
+  }
+}
+
 onMounted(() => {
   if (momentsWrap.value) {
-    momentsWrap.value.addEventListener('scroll', () => {
-      if (
-        momentsWrap.value.clientHeight + momentsWrap.value.scrollTop
-        >= momentsWrap.value.scrollHeight - 20
-        && moments.length > 0
-        && !isLoading.value
-      ) {
-        getData()
-      }
-    })
+    momentsWrap.value.removeEventListener('scroll', handleScroll)
+    momentsWrap.value.addEventListener('scroll', handleScroll)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (momentsWrap.value) {
+    momentsWrap.value.removeEventListener('scroll', handleScroll)
   }
 })
 

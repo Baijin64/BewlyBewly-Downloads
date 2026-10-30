@@ -169,12 +169,25 @@ onMounted(() => {
   }
   // document.documentElement.style.setProperty('font-size', '14px')
 
-  document.addEventListener('scroll', () => {
-    if (window.scrollY > 0)
-      reachTop.value = false
-    else
-      reachTop.value = true
-  })
+  window.addEventListener('scroll', handleWindowScroll, { passive: true })
+})
+
+function handleWindowScroll() {
+  if (window.scrollY > 0)
+    reachTop.value = false
+  else
+    reachTop.value = true
+}
+
+onBeforeUnmount(() => {
+  if (osScrollRafId !== null) {
+    cancelAnimationFrame(osScrollRafId)
+    osScrollRafId = null
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', handleWindowScroll)
 })
 
 function handleDockItemClick(dockItem: DockItem) {
@@ -232,25 +245,32 @@ function handleBackToTop(targetScrollTop = 0 as number) {
   iframePageRef.value?.handleBackToTop()
 }
 
+let osScrollRafId: number | null = null
+
 function handleOsScroll() {
-  emitter.emit(OVERLAY_SCROLL_BAR_SCROLL)
+  if (osScrollRafId !== null)
+    return
+  osScrollRafId = requestAnimationFrame(() => {
+    osScrollRafId = null
+    emitter.emit(OVERLAY_SCROLL_BAR_SCROLL)
 
-  const osInstance = scrollbarRef.value?.osInstance()
-  const { viewport } = osInstance.elements()
-  const { scrollTop, scrollHeight, clientHeight } = viewport // get scroll offset
+    const osInstance = scrollbarRef.value?.osInstance()
+    const { viewport } = osInstance.elements()
+    const { scrollTop, scrollHeight, clientHeight } = viewport // get scroll offset
 
-  if (scrollTop === 0) {
-    reachTop.value = true
-  }
-  else {
-    reachTop.value = false
-  }
+    if (scrollTop === 0) {
+      reachTop.value = true
+    }
+    else {
+      reachTop.value = false
+    }
 
-  if (clientHeight + scrollTop >= scrollHeight - 300)
-    handleThrottledReachBottom()
+    if (clientHeight + scrollTop >= scrollHeight - 300)
+      handleThrottledReachBottom()
 
-  if (isHomePage())
-    topBarRef.value?.handleScroll()
+    if (isHomePage() && settings.value.useOriginalBilibiliHomepage)
+      topBarRef.value?.handleScroll()
+  })
 }
 
 function openIframeDrawer(url: string) {
@@ -351,7 +371,7 @@ provide<BewlyAppProvider>('BEWLY_APP', {
     <!-- Settings -->
     <DownloadRoot v-if="settings.enableDownloads" />
     <PlaybackRoot v-if="isVideoOrBangumiPage()" />
-    <KeepAlive>
+    <KeepAlive :max="3">
       <Settings v-if="showSettings" z-10002 @close="showSettings = false" />
     </KeepAlive>
 

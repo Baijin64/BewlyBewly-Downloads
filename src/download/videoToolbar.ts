@@ -55,12 +55,40 @@ export function createVideoToolbarDownload(options: ToolbarOptions, doc: Documen
     if (view) {
       const native = view.getComputedStyle(share)
       const slot = view.getComputedStyle(anchor)
-      Object.assign(wrapper.style, { display: 'flex', alignItems: 'center', flexShrink: '0', marginRight: slot.marginRight, width: slot.width })
-      wrapper.style.setProperty('--bew-download-text', native.color)
-      wrapper.style.setProperty('--bew-download-accent', options.accentColor())
-      if (button)
+      const nextDisplay = 'flex'
+      const nextAlignItems = 'center'
+      const nextFlexShrink = '0'
+      const nextMarginRight = slot.marginRight
+      const nextWidth = slot.width
+      const nextInlineSize = slot.width
+
+      if (wrapper.style.display !== nextDisplay)
+        wrapper.style.display = nextDisplay
+      if (wrapper.style.alignItems !== nextAlignItems)
+        wrapper.style.alignItems = nextAlignItems
+      if (wrapper.style.flexShrink !== nextFlexShrink)
+        wrapper.style.flexShrink = nextFlexShrink
+      if (wrapper.style.marginRight !== nextMarginRight)
+        wrapper.style.marginRight = nextMarginRight
+      if (wrapper.style.width !== nextWidth)
+        wrapper.style.width = nextWidth
+
+      syncHostStyle(wrapper, nextInlineSize)
+
+      const nextText = native.color
+      if (wrapper.style.getPropertyValue('--bew-download-text') !== nextText)
+        wrapper.style.setProperty('--bew-download-text', nextText)
+      const nextAccent = options.accentColor()
+      if (wrapper.style.getPropertyValue('--bew-download-accent') !== nextAccent)
+        wrapper.style.setProperty('--bew-download-accent', nextAccent)
+      if (button && button.style.fontSize !== native.fontSize)
         button.style.fontSize = native.fontSize
     }
+  }
+
+  function syncHostStyle(host: HTMLElement, nextInlineSize?: string) {
+    if (nextInlineSize !== undefined && host.style.inlineSize !== nextInlineSize)
+      host.style.inlineSize = nextInlineSize
   }
 
   return { refresh, dispose }

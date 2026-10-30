@@ -6,6 +6,9 @@ import { abortError, isAbortError, loadingMethods, previewExpiry, ResourceBroker
 import API_VIDEO from './messageListeners/api/video'
 
 const broker = new ResourceBroker()
+const fallbackUrls: Partial<Record<LoadingMethod, string>> = {
+  getVideoInfo: 'https://api.bilibili.com/x/web-interface/view',
+}
 export function setupLoadingMessages() {
   browser.runtime.onMessage.addListener((message, sender) => {
     if (message?.bewlyResource !== true)
@@ -49,7 +52,7 @@ async function handle(message: { id: string, method: LoadingMethod | 'cancel', p
       const headers: Record<string, string> = {}
       // Preserve Firefox container isolation, matching the existing API bridge.
       if (sender.tab?.cookieStoreId) {
-        const cookies = await browser.cookies.getAll({ storeId: sender.tab.cookieStoreId })
+        const cookies = await browser.cookies.getAll({ storeId: sender.tab.cookieStoreId, domain: 'bilibili.com' })
         headers['firefox-multi-account-cookie'] = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
       }
       const controller = new AbortController()
@@ -59,10 +62,29 @@ async function handle(message: { id: string, method: LoadingMethod | 'cancel', p
       try {
         if (signal.aborted)
           controller.abort()
-        const response = await fetch(target, { headers, credentials: 'include', signal: controller.signal })
-        if (!response.ok)
-          throw new Error('Request failed')
-        return await response.json()
+        const load = async (url: URL) => {
+          const response = await fetch(url, { headers, credentials: 'include', signal: controller.signal })
+          if (!response.ok)
+            throw new Error('Request failed')
+          return await response.json()
+        }
+        const fallback = fallbackUrls[method]
+        if (!fallback)
+          return await load(target)
+        // The WBI endpoint may refuse a request without its signature; the
+        // legacy one takes the same parameters, as the download resolver does.
+        const fallbackTarget = new URL(fallback)
+        fallbackTarget.search = target.search
+        try {
+          const value = await load(target)
+          if (value?.code === 0)
+            return value
+        }
+        catch (error) {
+          if (controller.signal.aborted)
+            throw error
+        }
+        return await load(fallbackTarget)
       }
       catch {
         if (signal.aborted)

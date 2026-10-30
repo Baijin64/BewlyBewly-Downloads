@@ -275,7 +275,13 @@ async function prepare(
   const pending: Promise<void> = (async () => {
     let identity = apiIdentity.get(tab)
     if (!identity || identity.bvid !== bvid) {
-      const video = await biliApi('/x/web-interface/view', { bvid })
+      let video: any
+      try {
+        video = await biliApi('/x/web-interface/wbi/view', { bvid })
+      }
+      catch {
+        video = await biliApi('/x/web-interface/view', { bvid })
+      }
       if (!live())
         return
       const part = video.pages?.find((item: any) => item.page === page)

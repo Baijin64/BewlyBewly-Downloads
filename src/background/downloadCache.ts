@@ -11,21 +11,80 @@ let snapshot: Snapshot
 let ready: Promise<void> | undefined
 let saving = Promise.resolve()
 let connected = false
+
+const mutatingMethods = new Set([
+  'createTasks',
+  'stageTasks',
+  'pauseTask',
+  'resumeTask',
+  'cancelTask',
+  'deleteTask',
+  'retryTask',
+  'updateSettings',
+  'taskAction',
+  'batchAction',
+  'configure',
+  'migrationImport',
+  'uiSnapshot',
+])
+
+let lastSavedFingerprint = ''
+let lastSavedState = ''
+let lastSaveTime = 0
+let throttleTimer: ReturnType<typeof setTimeout> | undefined
+
+function computeFingerprint(tasks: DownloadTask[] = snapshot?.tasks || []): string {
+  let out = `${tasks.length}:`
+  for (let i = 0; i < tasks.length; i++) {
+    const t = tasks[i]
+    const p = (t as any).progress
+    out += `${t.id}|${t.status}|${p?.downloadedBytes ?? 0}|${p?.totalBytes ?? 0}|${p?.percent ?? p ?? 0}|${t.error ?? ''}|${(t as any).updatedAt ?? ''};`
+  }
+  return out
+}
+
+/**
+ * Statuses and counts only. A change here is saved at once: a worker restart
+ * reads these to decide whether to reattach, and a lost save would leave the
+ * list frozen on an old state.
+ */
+function computeStateFingerprint(): string {
+  if (!snapshot)
+    return ''
+  return JSON.stringify([snapshot.counts, snapshot.tasks.map(task => [task.id, task.status, task.error ?? ''])])
+}
+
+function saveNow() {
+  if (throttleTimer) {
+    clearTimeout(throttleTimer)
+    throttleTimer = undefined
+  }
+  lastSavedFingerprint = computeFingerprint()
+  lastSavedState = computeStateFingerprint()
+  lastSaveTime = Date.now()
+  const value: Snapshot = {
+    health: snapshot.health,
+    tasks: snapshot.tasks,
+    counts: snapshot.counts,
+    syncedAt: snapshot.syncedAt,
+    initialized: snapshot.initialized,
+  }
+  saving = saving.catch(() => {}).then(() => browser.storage.local.set({ [key]: value })).catch(() => {})
+  return saving
+}
+
 export async function downloadSnapshot() {
   ready ||= browser.storage.local.get(key).then((data) => {
     const saved = data[key]
     snapshot = { tasks: [], counts: { pending: 0, active: 0, completed: 0, failed: 0 }, ...saved }
+    lastSavedFingerprint = computeFingerprint()
+    lastSavedState = computeStateFingerprint()
   })
   await ready
   return snapshot
 }
 export function helperConnected() {
   return connected
-}
-function save() {
-  const value = structuredClone(snapshot)
-  saving = saving.catch(() => {}).then(() => browser.storage.local.set({ [key]: value })).catch(() => {})
-  return saving
 }
 export async function rememberReply(method: string, reply: DownloadReply<any>, params: Record<string, unknown> = {}) {
   await downloadSnapshot()
@@ -76,10 +135,35 @@ export async function rememberReply(method: string, reply: DownloadReply<any>, p
     connected = false
   }
   snapshot.initialized = true
-  await save()
+  const isMutating = mutatingMethods.has(method)
+  const currentFingerprint = computeFingerprint()
+  const isDirty = currentFingerprint !== lastSavedFingerprint
+
+  if (isMutating || computeStateFingerprint() !== lastSavedState) {
+    await saveNow()
+  }
+  else if (isDirty) {
+    const elapsed = Date.now() - lastSaveTime
+    if (elapsed >= 15000) {
+      await saveNow()
+    }
+    else if (!throttleTimer) {
+      throttleTimer = setTimeout(() => {
+        throttleTimer = undefined
+        if (computeFingerprint() !== lastSavedFingerprint)
+          void saveNow()
+      }, 15000 - elapsed)
+    }
+  }
 }
-export function markHelperOffline() {
+export function markHelperOffline(_reason?: string) {
   connected = false
+}
+const runningStatuses = ['queued', 'resolving', 'downloading', 'muxing', 'postprocessing']
+/** Whether the last known state still has work the helper is carrying out. */
+export async function cachedWorkInProgress() {
+  const state = await downloadSnapshot()
+  return state.tasks.some(task => runningStatuses.includes(task.status))
 }
 export async function cachedHealth(): Promise<HelperStatus> {
   const state = await downloadSnapshot()

@@ -61,37 +61,47 @@ watch(activatedTab, (newVal: number | undefined, oldVal: number | undefined) => 
   }
 }, { immediate: true })
 
+function handleScroll() {
+  // When you scroll to the bottom, they will automatically
+  // add the next page of data to the history list
+  if (
+    historysWrap.value
+    && historysWrap.value.clientHeight + historysWrap.value.scrollTop
+    >= historysWrap.value.scrollHeight - 20
+    && historys.length > 0
+    && !isLoading.value
+  ) {
+    if (activatedTab.value === 0 && !noMoreContent.value) {
+      getHistoryList(
+        Business.ARCHIVE,
+        historys[historys.length - 1].view_at,
+      )
+    }
+    else if (activatedTab.value === 1 && !noMoreContent.value) {
+      getHistoryList(
+        Business.LIVE,
+        historys[historys.length - 1].view_at,
+      )
+    }
+    else if (activatedTab.value === 2 && !noMoreContent.value) {
+      getHistoryList(
+        Business.ARTICLE,
+        historys[historys.length - 1].view_at,
+      )
+    }
+  }
+}
+
 onMounted(() => {
   if (historysWrap.value) {
-    historysWrap.value.addEventListener('scroll', () => {
-      // When you scroll to the bottom, they will automatically
-      // add the next page of data to the history list
-      if (
-        historysWrap.value.clientHeight + historysWrap.value.scrollTop
-        >= historysWrap.value.scrollHeight - 20
-        && historys.length > 0
-        && !isLoading.value
-      ) {
-        if (activatedTab.value === 0 && !noMoreContent.value) {
-          getHistoryList(
-            Business.ARCHIVE,
-            historys[historys.length - 1].view_at,
-          )
-        }
-        else if (activatedTab.value === 1 && !noMoreContent.value) {
-          getHistoryList(
-            Business.LIVE,
-            historys[historys.length - 1].view_at,
-          )
-        }
-        else if (activatedTab.value === 2 && !noMoreContent.value) {
-          getHistoryList(
-            Business.ARTICLE,
-            historys[historys.length - 1].view_at,
-          )
-        }
-      }
-    })
+    historysWrap.value.removeEventListener('scroll', handleScroll)
+    historysWrap.value.addEventListener('scroll', handleScroll)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (historysWrap.value) {
+    historysWrap.value.removeEventListener('scroll', handleScroll)
   }
 })
 

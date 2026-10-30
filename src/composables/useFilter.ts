@@ -59,13 +59,33 @@ export function useFilter(isFollowedKeyPath: string[], filterOpt: FilterType[], 
     return !Number.isNaN(numericValue) && numericValue > filterValue
   }
 
+  function safeCreateRegExp(pattern: string, flags = 'i'): RegExp | null {
+    try {
+      return new RegExp(pattern, flags)
+    }
+    catch {
+      return null
+    }
+  }
+
+  function safeTestRegExp(regex: RegExp, str: string): boolean {
+    try {
+      return regex.test(str)
+    }
+    catch {
+      return false
+    }
+  }
+
   // #region filter by title
   const filterByTitleStringValues: string[] = []
   const filterByTitleRegExpValues: RegExp[] = []
 
   settings.value.filterByTitle.forEach((item) => {
-    if (item.keyword.startsWith('/') && item.keyword.endsWith('/')) {
-      filterByTitleRegExpValues.push(new RegExp(item.keyword.slice(1, -1), 'i'))
+    if (item.keyword.length >= 2 && item.keyword.startsWith('/') && item.keyword.endsWith('/')) {
+      const reg = safeCreateRegExp(item.keyword.slice(1, -1), 'i')
+      if (reg)
+        filterByTitleRegExpValues.push(reg)
     }
     else {
       filterByTitleStringValues.push(`${item.keyword}`.toUpperCase())
@@ -82,7 +102,7 @@ export function useFilter(isFollowedKeyPath: string[], filterOpt: FilterType[], 
     const value = get(item, keyPath)
 
     return !(filterByTitleStringValues.some(keyword => `${value}`.toUpperCase().includes(keyword))
-      || filterByTitleRegExpValues.some(regex => regex.test(value)))
+      || filterByTitleRegExpValues.some(regex => safeTestRegExp(regex, `${value}`)))
   }
   // #endregion
 
@@ -91,8 +111,10 @@ export function useFilter(isFollowedKeyPath: string[], filterOpt: FilterType[], 
   const filterByUserRegExpValues: RegExp[] = []
 
   settings.value.filterByUser.forEach((item) => {
-    if (item.keyword.startsWith('/') && item.keyword.endsWith('/')) {
-      filterByUserRegExpValues.push(new RegExp(item.keyword.slice(1, -1), 'i'))
+    if (item.keyword.length >= 2 && item.keyword.startsWith('/') && item.keyword.endsWith('/')) {
+      const reg = safeCreateRegExp(item.keyword.slice(1, -1), 'i')
+      if (reg)
+        filterByUserRegExpValues.push(reg)
     }
     else {
       filterByUserStringValues.push(`${item.keyword}`.toUpperCase())
@@ -109,7 +131,7 @@ export function useFilter(isFollowedKeyPath: string[], filterOpt: FilterType[], 
     const value = get(item, keyPath)
 
     return !(filterByUserStringValues.includes(`${value}`.toUpperCase())
-      || filterByUserRegExpValues.some(regex => regex.test(value)))
+      || filterByUserRegExpValues.some(regex => safeTestRegExp(regex, `${value}`)))
   }
   // #endregion
 

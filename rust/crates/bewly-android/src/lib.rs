@@ -32,6 +32,7 @@ pub extern "system" fn Java_io_bewly_download_BewlyNative_startService(
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
             .expect("Failed to build Tokio runtime for BewlyService");

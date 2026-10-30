@@ -116,12 +116,54 @@ fn plausible_origin(origin: &str) -> bool {
     id.len() == 32 && id.bytes().all(|byte| (b'a'..=b'p').contains(&byte))
 }
 
-fn origin_allowed(origin: &str) -> bool {
-    let origins = allowed_origins();
-    if origins.is_empty() {
-        return plausible_origin(origin);
+fn allowed_firefox_extensions() -> Vec<String> {
+    if let Ok(path) = std::env::var("BEWLY_IDENTITY_FILE") {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                if let Some(id) = value.get("firefoxExtensionId").and_then(Value::as_str) {
+                    return vec![id.to_string()];
+                }
+            }
+        }
     }
-    origins.iter().any(|allowed| allowed == origin)
+    let directory = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+        .unwrap_or_default();
+    for candidate in [
+        directory.join("identity.json"),
+        directory.join("../Resources/identity.json"),
+        directory.join("../../platforms/identity.json"),
+        directory.join("../../../platforms/identity.json"),
+    ] {
+        if let Ok(text) = std::fs::read_to_string(candidate) {
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                if let Some(id) = value.get("firefoxExtensionId").and_then(Value::as_str) {
+                    return vec![id.to_string()];
+                }
+            }
+        }
+    }
+    vec!["addon@bewlybewly.com".to_string()]
+}
+
+fn origin_allowed(args: &[String]) -> bool {
+    let origins = allowed_origins();
+    let ff_extensions = allowed_firefox_extensions();
+
+    for arg in args {
+        if ff_extensions.iter().any(|id| id == arg) {
+            return true;
+        }
+        if origins.is_empty() {
+            if plausible_origin(arg) {
+                return true;
+            }
+        } else if origins.iter().any(|allowed| allowed == arg) {
+            return true;
+        }
+    }
+    false
 }
 
 fn service_descriptor() -> Option<(u16, String, Option<u32>)> {
@@ -219,7 +261,21 @@ fn start_service(service_mode: &str) -> Result<u32, String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0008); // CREATE_NO_WINDOW | DETACHED_PROCESS
+        // The browser runs native hosts in a job object that it closes when the
+        // port disconnects, which would end running downloads with it.
+        // CREATE_BREAKAWAY_FROM_JOB | CREATE_NO_WINDOW | DETACHED_PROCESS
+        command.creation_flags(0x0900_0008);
+        if let Ok(child) = command.spawn() {
+            return Ok(child.id());
+        }
+        // A job without the breakaway permission rejects the flag; start inside it.
+        command.creation_flags(0x0800_0008);
+    }
+    #[cfg(unix)]
+    {
+        // Its own process group, so a signal to the host's group spares running downloads.
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
     }
     let child = command.spawn().map_err(|error| error.to_string())?;
     Ok(child.id())
@@ -314,8 +370,16 @@ fn dispatch_rust(message: &Value) -> Value {
     if let Some(session) = message.get("session") {
         request["session"] = session.clone();
     }
+    // A native picker waits on the user, so it gets as long as the browser allows.
+    let timeout_ms = if method == "tool"
+        && request["params"].get("op").and_then(Value::as_str) == Some("pick")
+    {
+        600_000
+    } else {
+        30_000
+    };
     DISPATCHING.fetch_add(1, Ordering::SeqCst);
-    let rpc_result = http_rpc(port, &token, &request, 30_000);
+    let rpc_result = http_rpc(port, &token, &request, timeout_ms);
     DISPATCHING.fetch_sub(1, Ordering::SeqCst);
     match rpc_result {
         Ok(mut response) => {
@@ -325,7 +389,7 @@ fn dispatch_rust(message: &Value) -> Value {
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 if let Ok((port, token)) = ensure_service(true) {
                     DISPATCHING.fetch_add(1, Ordering::SeqCst);
-                    let retry_result = http_rpc(port, &token, &request, 30_000);
+                    let retry_result = http_rpc(port, &token, &request, timeout_ms);
                     DISPATCHING.fetch_sub(1, Ordering::SeqCst);
                     if let Ok(retry) = retry_result {
                         response = retry;
@@ -339,9 +403,14 @@ fn dispatch_rust(message: &Value) -> Value {
 }
 
 #[cfg(windows)]
-fn register_platform(manifest_path: &Path) -> Result<(), String> {
-    let manifest_str = manifest_path.to_string_lossy();
-    for browser in ["Google\\Chrome", "Microsoft\\Edge"] {
+fn register_platform(chromium_manifest: &Path, firefox_manifest: &Path) -> Result<(), String> {
+    let chromium_str = chromium_manifest.to_string_lossy();
+    for browser in [
+        "Google\\Chrome",
+        "Microsoft\\Edge",
+        "BraveSoftware\\Brave-Browser",
+        "Chromium",
+    ] {
         let key = format!("HKCU\\Software\\{browser}\\NativeMessagingHosts\\io.bewly.download");
         let status = Command::new("reg.exe")
             .args([
@@ -351,7 +420,7 @@ fn register_platform(manifest_path: &Path) -> Result<(), String> {
                 "/t",
                 "REG_SZ",
                 "/d",
-                &manifest_str,
+                &chromium_str,
                 "/f",
             ])
             .status()
@@ -360,23 +429,50 @@ fn register_platform(manifest_path: &Path) -> Result<(), String> {
             return Err(format!("注册表写入失败: reg.exe 返回 {status}"));
         }
     }
+
+    let firefox_str = firefox_manifest.to_string_lossy();
+    let key = "HKCU\\Software\\Mozilla\\NativeMessagingHosts\\io.bewly.download";
+    let status = Command::new("reg.exe")
+        .args([
+            "add",
+            key,
+            "/ve",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &firefox_str,
+            "/f",
+        ])
+        .status()
+        .map_err(|error| format!("注册表写入失败: {error}"))?;
+    if !status.success() {
+        return Err(format!("注册表写入失败: reg.exe 返回 {status}"));
+    }
+
     Ok(())
 }
 
 #[cfg(windows)]
-fn unregister_platform(manifest_path: &Path) -> Result<(), String> {
-    for browser in ["Google\\Chrome", "Microsoft\\Edge"] {
+fn unregister_platform(chromium_manifest: &Path, firefox_manifest: &Path) -> Result<(), String> {
+    for browser in [
+        "Google\\Chrome",
+        "Microsoft\\Edge",
+        "BraveSoftware\\Brave-Browser",
+        "Chromium",
+        "Mozilla",
+    ] {
         let key = format!("HKCU\\Software\\{browser}\\NativeMessagingHosts\\io.bewly.download");
         let _ = Command::new("reg.exe")
             .args(["delete", &key, "/f"])
             .status();
     }
-    let _ = std::fs::remove_file(manifest_path);
+    let _ = std::fs::remove_file(chromium_manifest);
+    let _ = std::fs::remove_file(firefox_manifest);
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn browser_manifest_paths() -> Vec<PathBuf> {
+fn chromium_manifest_paths() -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let app_support = PathBuf::from(home)
         .join("Library")
@@ -395,11 +491,30 @@ fn browser_manifest_paths() -> Vec<PathBuf> {
             .join("Chromium")
             .join("NativeMessagingHosts")
             .join("io.bewly.download.json"),
+        app_support
+            .join("BraveSoftware")
+            .join("Brave-Browser")
+            .join("NativeMessagingHosts")
+            .join("io.bewly.download.json"),
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn firefox_manifest_paths() -> Vec<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let app_support = PathBuf::from(home)
+        .join("Library")
+        .join("Application Support");
+    vec![
+        app_support
+            .join("Mozilla")
+            .join("NativeMessagingHosts")
+            .join("io.bewly.download.json"),
     ]
 }
 
 #[cfg(target_os = "linux")]
-fn browser_manifest_paths() -> Vec<PathBuf> {
+fn chromium_manifest_paths() -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let config = match std::env::var("XDG_CONFIG_HOME") {
         Ok(dir) => PathBuf::from(dir),
@@ -418,46 +533,76 @@ fn browser_manifest_paths() -> Vec<PathBuf> {
             .join("microsoft-edge")
             .join("NativeMessagingHosts")
             .join("io.bewly.download.json"),
+        config
+            .join("BraveSoftware")
+            .join("Brave-Browser")
+            .join("NativeMessagingHosts")
+            .join("io.bewly.download.json"),
+    ]
+}
+
+#[cfg(target_os = "linux")]
+fn firefox_manifest_paths() -> Vec<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    vec![
+        PathBuf::from(home)
+            .join(".mozilla")
+            .join("native-messaging-hosts")
+            .join("io.bewly.download.json"),
     ]
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn register_platform(manifest_path: &Path) -> Result<(), String> {
-    let bytes = std::fs::read(manifest_path).map_err(|error| error.to_string())?;
-    for target in browser_manifest_paths() {
+fn register_platform(chromium_manifest: &Path, firefox_manifest: &Path) -> Result<(), String> {
+    let chromium_bytes = std::fs::read(chromium_manifest).map_err(|error| error.to_string())?;
+    for target in chromium_manifest_paths() {
         if let Some(parent) = target.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::write(&target, &bytes);
+        let _ = std::fs::write(&target, &chromium_bytes);
+    }
+    let firefox_bytes = std::fs::read(firefox_manifest).map_err(|error| error.to_string())?;
+    for target in firefox_manifest_paths() {
+        if let Some(parent) = target.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&target, &firefox_bytes);
     }
     Ok(())
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn unregister_platform(manifest_path: &Path) -> Result<(), String> {
-    for target in browser_manifest_paths() {
+fn unregister_platform(chromium_manifest: &Path, firefox_manifest: &Path) -> Result<(), String> {
+    for target in chromium_manifest_paths() {
         let _ = std::fs::remove_file(&target);
     }
-    let _ = std::fs::remove_file(manifest_path);
+    for target in firefox_manifest_paths() {
+        let _ = std::fs::remove_file(&target);
+    }
+    let _ = std::fs::remove_file(chromium_manifest);
+    let _ = std::fs::remove_file(firefox_manifest);
     Ok(())
 }
 
 #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
-fn register_platform(_manifest_path: &Path) -> Result<(), String> {
+fn register_platform(_chromium_manifest: &Path, _firefox_manifest: &Path) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
-fn unregister_platform(manifest_path: &Path) -> Result<(), String> {
-    let _ = std::fs::remove_file(manifest_path);
+fn unregister_platform(chromium_manifest: &Path, firefox_manifest: &Path) -> Result<(), String> {
+    let _ = std::fs::remove_file(chromium_manifest);
+    let _ = std::fs::remove_file(firefox_manifest);
     Ok(())
 }
 
-fn register() -> Result<(), String> {
-    let data_dir = data_directory();
-    std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+#[allow(dead_code)]
+fn write_native_manifest(data_dir: &Path, exe: &Path) -> Result<(PathBuf, PathBuf), String> {
+    write_native_manifests(data_dir, exe)
+}
+
+fn write_native_manifests(data_dir: &Path, exe: &Path) -> Result<(PathBuf, PathBuf), String> {
     let manifest_path = data_dir.join("native-host.json");
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let manifest = json!({
         "name": "io.bewly.download",
         "description": "Bewly local download core",
@@ -467,20 +612,41 @@ fn register() -> Result<(), String> {
     });
     let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
     std::fs::write(&manifest_path, &manifest_bytes).map_err(|error| error.to_string())?;
-    register_platform(&manifest_path)?;
+
+    let firefox_manifest_path = data_dir.join("native-host-firefox.json");
+    let firefox_manifest = json!({
+        "name": "io.bewly.download",
+        "description": "Bewly local download core",
+        "path": exe.to_string_lossy(),
+        "type": "stdio",
+        "allowed_extensions": allowed_firefox_extensions(),
+    });
+    let firefox_manifest_bytes = serde_json::to_vec_pretty(&firefox_manifest).map_err(|error| error.to_string())?;
+    std::fs::write(&firefox_manifest_path, &firefox_manifest_bytes).map_err(|error| error.to_string())?;
+
+    Ok((manifest_path, firefox_manifest_path))
+}
+
+fn register() -> Result<(), String> {
+    let data_dir = data_directory();
+    std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let (manifest_path, firefox_manifest_path) = write_native_manifests(&data_dir, &exe)?;
+    register_platform(&manifest_path, &firefox_manifest_path)?;
     println!("注册成功：{}", manifest_path.display());
+    println!("Firefox 注册成功：{}", firefox_manifest_path.display());
     Ok(())
 }
 
 fn unregister() -> Result<(), String> {
     let manifest_path = data_directory().join("native-host.json");
-    unregister_platform(&manifest_path)?;
+    let firefox_manifest_path = data_directory().join("native-host-firefox.json");
+    unregister_platform(&manifest_path, &firefox_manifest_path)?;
     println!("注销成功");
     Ok(())
 }
-
-fn run_stdio(origin: &str) -> i32 {
-    if !origin_allowed(origin) {
+fn run_stdio(args: &[String]) -> i32 {
+    if !origin_allowed(args) {
         // Chromium treats any byte on stdout as a protocol violation.
         return 2;
     }
@@ -570,8 +736,9 @@ fn run_stdio(origin: &str) -> i32 {
 fn main() {
     let arguments: Vec<String> = std::env::args().collect();
     let first = arguments.get(1).map(String::as_str).unwrap_or("");
-    if first == "--service" {
+    if first == "--service" || first == "--daemon" {
         let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
             .expect("tokio runtime");
@@ -601,7 +768,7 @@ fn main() {
         println!("bewly-host {VERSION}");
         return;
     }
-    if first == "--register" || first.is_empty() {
+    if first == "--register" || first == "--install" || first.is_empty() {
         if let Err(error) = register() {
             eprintln!("{error}");
             std::process::exit(1);
@@ -611,18 +778,35 @@ fn main() {
         }
         return;
     }
-    if first == "--unregister" {
+    if first == "--unregister" || first == "--uninstall" {
         if let Err(error) = unregister() {
             eprintln!("{error}");
             std::process::exit(1);
         }
         return;
     }
-    if first.starts_with("chrome-extension://") {
-        std::process::exit(run_stdio(first));
+    if first.starts_with("chrome-extension://")
+        || first.ends_with(".json")
+        || arguments.iter().skip(1).any(|a| a == "addon@bewlybewly.com" || a.contains('@'))
+    {
+        std::process::exit(run_stdio(&arguments[1..]));
     }
     eprintln!(
-        "bewly-host {VERSION}\nusage: bewly-host <chrome-extension-origin> | --service | --start-service | --register | --unregister"
+        "bewly-host {VERSION}\nusage: bewly-host <chrome-extension-origin> | <manifest-path> <firefox-extension-id> | --service | --daemon | --start-service | --register | --install | --unregister | --uninstall"
     );
     std::process::exit(2);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_origin_allowed() {
+        assert!(origin_allowed(&["chrome-extension://knnflmlfhhiajbjolfbgkjiadnpmmlcn/".into()]));
+        assert!(origin_allowed(&["addon@bewlybewly.com".into()]));
+        assert!(origin_allowed(&["native-host-firefox.json".into(), "addon@bewlybewly.com".into()]));
+        assert!(!origin_allowed(&["chrome-extension://invalidorigin12345/".into()]));
+        assert!(!origin_allowed(&["native-host-firefox.json".into(), "evil@extension.com".into()]));
+    }
 }

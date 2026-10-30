@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::naming::{date_value, plan_location, utf16_len, validate_template, Streams, TaskView};
+use crate::naming::{date_value, plan_location, utf16_len, validate_template, Streams, TaskView, VideoStream};
 
 pub const OUTPUT_KINDS: [&str; 9] = [
     "video", "silent", "audio", "mp3", "cover", "xml", "ass", "srt", "nfo",
@@ -90,10 +90,14 @@ pub fn validate_options(value: &Value) -> Result<DownloadOptions, String> {
         return Err("无效画质".into());
     }
     let quality = quality as u32;
-    let codec = string_of(value.get("codec"), "auto");
-    if !matches!(codec.as_str(), "auto" | "avc" | "hevc" | "av1") {
-        return Err("无效下载格式".into());
-    }
+    let raw_codec = string_of(value.get("codec"), "auto");
+    let codec = match raw_codec.as_str() {
+        "auto" => "auto",
+        "avc" | "avc1" => "avc",
+        "hevc" | "hev1" | "hvc1" => "hevc",
+        "av1" | "av01" => "av1",
+        _ => return Err("无效下载格式".into()),
+    };
     let mode = string_of(value.get("mode"), "video");
     if !matches!(mode.as_str(), "video" | "audio") {
         return Err("无效下载格式".into());
@@ -175,7 +179,7 @@ pub fn validate_options(value: &Value) -> Result<DownloadOptions, String> {
 
     Ok(DownloadOptions {
         quality,
-        codec,
+        codec: codec.to_string(),
         audio_quality,
         mode,
         cover: outputs.iter().any(|kind| kind == "cover"),
@@ -327,6 +331,41 @@ pub fn select_streams(data: &Value, options: &DownloadOptions) -> Result<Streams
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+
+    if videos.is_empty() {
+        if let Some(durl) = data.get("durl").and_then(Value::as_array) {
+            // Audio is taken out of the combined file, which is only fetched for a video output.
+            if !need_video && !durl.is_empty() {
+                return Err("这个视频只提供音画合一的文件，请同时勾选视频输出再提取音频".into());
+            }
+            if let Some(first) = durl.first() {
+                let url = first.get("url").and_then(Value::as_str).unwrap_or("");
+                if !url.is_empty() {
+                    let mut urls = vec![url.to_string()];
+                    if let Some(backups) = first.get("backup_url").and_then(Value::as_array) {
+                        for item in backups {
+                            if let Some(u) = item.as_str().filter(|s| !s.is_empty()) {
+                                urls.push(u.to_string());
+                            }
+                        }
+                    }
+                    let quality = data.get("quality").and_then(Value::as_u64).unwrap_or(0) as u32;
+                    let bandwidth = first.get("size").and_then(Value::as_f64).unwrap_or(0.0);
+                    let video_stream = VideoStream {
+                        quality,
+                        codec: 7,
+                        codecs: "avc1".to_string(),
+                        bandwidth,
+                        urls,
+                    };
+                    return Ok(Streams {
+                        video: if need_video { Some(video_stream) } else { None },
+                        audio: None,
+                    });
+                }
+            }
+        }
+    }
     let codec_code = match options.codec.as_str() {
         "avc" => Some(7),
         "hevc" => Some(12),

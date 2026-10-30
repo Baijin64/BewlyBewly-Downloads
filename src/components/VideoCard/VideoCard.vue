@@ -124,6 +124,13 @@ function stopPreview() {
   clearTimeout(mouseEnterTimeOut.value)
   clearTimeout(mouseLeaveTimeOut.value)
   mouseEnterTimeOut.value = undefined
+  previewVideoUrl.value = ''
+  if (videoElement.value) {
+    videoElement.value.pause()
+    videoElement.value.querySelectorAll('source').forEach(source => source.removeAttribute('src'))
+    videoElement.value.removeAttribute('src')
+    videoElement.value.load()
+  }
   isHover.value = false
   previewController?.abort()
 }

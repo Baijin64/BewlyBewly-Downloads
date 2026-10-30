@@ -32,11 +32,24 @@ npx esno scripts/pack-chrome-zip.ts dist/release-extension
 
 ## Windows 连接器
 
-安装 Windows SDK（MakeAppx/SignTool）与 .NET SDK（用于托盘 AOT 编译）。媒体传输、断点续传与合流均由 Rust 实现，构建不再需要 aria2c.exe 或 ffmpeg.exe。
+安装 Windows SDK（MakeAppx/SignTool）与 .NET SDK（用于托盘 AOT 编译）。媒体传输与断点续传由 Rust 实现；合流、提取音频和转 MP3 使用随包内置的 `bin\ffmpeg.exe`。
+
+FFmpeg 由 `scripts/toolchain/build-ffmpeg.sh` 从官方源码编译（FFmpeg 7.1.1 + LAME 3.100，LGPL，不含 GPL/non-free 组件，只保留合流与 MP3 编码所需部分）。Windows 版需要 MinGW 交叉编译；本机没有时可以用 Docker：
 
 ```bash
+bash scripts/toolchain/build-ffmpeg-docker.sh win32-x64   # 输出到 dist/toolchain/ffmpeg/win32-x64/
 cargo test --manifest-path rust/Cargo.toml
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -StageOnly
+```
+
+打包脚本找不到 FFmpeg 会拒绝构建；可用 `-FfmpegDirectory` 或环境变量 `BEWLY_FFMPEG_DIR` 指定其它目录。CI 在 Ubuntu 上编译 FFmpeg 后交给 Windows 打包任务。
+
+## Android
+
+FFmpeg 以 `libffmpeg.so` 的名字放进 `jniLibs/<abi>/`：Android 10 起应用只能执行原生库目录里的文件，`build.gradle.kts` 打开了 `useLegacyPackaging`，安装时会把它解压到该目录，服务启动时通过 `BEWLY_FFMPEG` 告诉 Rust 核心路径。
+
+```bash
+bash scripts/toolchain/build-ffmpeg-docker.sh android-arm64 android-x86_64   # 自动放入 jniLibs
 ```
 
 去掉 `StageOnly` 可构建未签名 MSIX；加 `DevSign` 使用本机证书签名，证书 Subject 必须与 `platforms/windows/AppxManifest.xml` 的 `Identity Publisher` 一致。

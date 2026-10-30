@@ -6,7 +6,7 @@
 
 0.44.7 / 助手 0.3.0 将下载服务改为按需启动：打开界面不启动下载服务，下载、入队或本地操作首次确认后唤起，完成后约 5 秒退出；Windows 手动启动默认常驻。最近记录与配置保留只读快照，轮询不会阻止退出。详见 [后台启动与退出](DOWNLOAD-LIFECYCLE.md)。
 
-当前个人维护**预览版**为扩展 **0.44.7**、助手 **0.3.0**（协议 2）。助手已完成 Rust 重写：不再需要 Node.js，也不再随包携带 aria2 与 FFmpeg，分片下载、续传、镜像轮换与任务队列均由 Rust 实现。合流仍待内置 libav，目前需要本机 FFmpeg，详见 [安装说明](INSTALL-DOWNLOADS.md)。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。
+当前个人维护**预览版**为扩展 **0.44.7**、助手 **0.3.0**（协议 2）。助手已完成 Rust 重写：不再需要 Node.js，也不再随包携带 aria2，分片下载、续传、镜像轮换与任务队列均由 Rust 实现。合流、提取音频和转 MP3 使用安装包内置的精简版 FFmpeg（LGPL），详见 [安装说明](INSTALL-DOWNLOADS.md)。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。
 
 此前推荐加载、悬停预览和渲染优化保持，详情见 [加载优化与验证](LOADING-OPTIMIZATION.md)。离线观看继续采用下载 MP4 后使用系统播放器。
 
