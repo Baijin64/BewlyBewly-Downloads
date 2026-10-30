@@ -179,6 +179,8 @@ function handleWindowScroll() {
     reachTop.value = true
 }
 
+let osScrollRafId: number | null = null
+
 onBeforeUnmount(() => {
   if (osScrollRafId !== null) {
     cancelAnimationFrame(osScrollRafId)
@@ -244,8 +246,6 @@ function handleBackToTop(targetScrollTop = 0 as number) {
 
   iframePageRef.value?.handleBackToTop()
 }
-
-let osScrollRafId: number | null = null
 
 function handleOsScroll() {
   if (osScrollRafId !== null)
