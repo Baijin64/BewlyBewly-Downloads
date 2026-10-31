@@ -37,3 +37,6 @@ rust/.cargo/config.toml
 
 # Golden fixtures used by include_bytes! in Rust tests
 !rust/crates/bewly-store/tests/fixtures/*.sqlite
+
+# Local agent workspace
+.workbuddy/
