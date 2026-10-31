@@ -103,7 +103,7 @@ tar -xzf "$CACHE/lame-$LAME_VERSION.tar.gz" -C "$WORK"
   # 3.100 exports a symbol it no longer defines; only the shared build trips on it,
   # but the export list is read regardless on some toolchains.
   sed -i.bak '/lame_init_old/d' include/libmp3lame.sym
-  env "${LAME_ENV[@]}" ./configure --prefix="$PREFIX" ${HOST:+--host=$HOST} \
+  env ${LAME_ENV[@]+"${LAME_ENV[@]}"} ./configure --prefix="$PREFIX" ${HOST:+--host=$HOST} \
     --enable-static --disable-shared --disable-frontend --disable-decoder \
     --disable-gtktest --with-pic
   make -j"$JOBS"
@@ -140,7 +140,7 @@ COMPONENT_FLAGS=(
 CONFIGURE=(./configure --prefix="$PREFIX" --enable-static --disable-shared
   --pkg-config-flags=--static
   --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib"
-  "${CROSS_FLAGS[@]}" "${COMPONENT_FLAGS[@]}")
+  ${CROSS_FLAGS[@]+"${CROSS_FLAGS[@]}"} "${COMPONENT_FLAGS[@]}")
 case "$TARGET" in
   win32-x64|linux-x64|darwin-*) CONFIGURE+=(--disable-x86asm) ;;
 esac
