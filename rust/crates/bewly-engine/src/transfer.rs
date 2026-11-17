@@ -113,9 +113,16 @@ fn content_range_total(value: &str) -> Option<u64> {
 /// Probes the remote object: total size and whether ranges are honoured.
 /// Mirrors are tried in order because a single CDN node may answer 5xx while the
 /// backup already serves the same object.
-fn probe(urls: &[String], headers: &[(String, String)]) -> Result<(u64, bool), EngineError> {
+fn probe(
+    urls: &[String],
+    headers: &[(String, String)],
+    cancel: &AtomicBool,
+) -> Result<(u64, bool), EngineError> {
     let mut last = String::new();
     for attempt in 0..(urls.len() * 2).max(3) {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(EngineError::Cancelled);
+        }
         let url = &urls[attempt % urls.len()];
         match request(url, headers, Some((0, 0))).call() {
             Ok(response) => {
@@ -163,6 +170,48 @@ fn write_at(file: &File, mut offset: u64, mut bytes: &[u8]) -> Result<(), Engine
     Ok(())
 }
 
+enum PieceReadError {
+    /// Pause or cancel arrived while the body was still streaming in.
+    Stopped,
+    Io(std::io::Error),
+}
+
+/// Bytes read between two looks at the cancel flag.
+const READ_SLICE: usize = 64 * 1024;
+
+/// Reads up to `expected` bytes into `buf` (a short body leaves `buf` short).
+/// The flag is checked every slice, not once per piece: on a slow link a
+/// piece takes many seconds, and a paused task would otherwise keep its
+/// connections and its concurrency slot for that long.
+fn read_piece(
+    reader: &mut impl Read,
+    expected: u64,
+    buf: &mut Vec<u8>,
+    cancel: &AtomicBool,
+    worker_abort: &AtomicBool,
+) -> Result<(), PieceReadError> {
+    buf.clear();
+    buf.resize(expected as usize, 0);
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        if cancel.load(Ordering::Relaxed) || worker_abort.load(Ordering::Relaxed) {
+            return Err(PieceReadError::Stopped);
+        }
+        let end = (filled + READ_SLICE).min(buf.len());
+        match reader.read(&mut buf[filled..end]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                buf.truncate(filled);
+                return Err(PieceReadError::Io(error));
+            }
+        }
+    }
+    buf.truncate(filled);
+    Ok(())
+}
+
 /// Fetches a run of adjacent pieces with one ranged request, handing each
 /// piece to `on_piece` as soon as its bytes arrive. A dropped connection
 /// resumes from the first piece not yet delivered, on the next mirror.
@@ -196,17 +245,17 @@ fn fetch_run(
                 while done < run.len() {
                     let (piece, piece_range) = run[done];
                     let expected = piece_range.1 - piece_range.0 + 1;
-                    buf.clear();
-                    match (&mut reader).take(expected).read_to_end(buf) {
-                        Ok(_) if buf.len() as u64 == expected => {
+                    match read_piece(&mut reader, expected, buf, cancel, worker_abort) {
+                        Ok(()) if buf.len() as u64 == expected => {
                             on_piece(piece, piece_range, buf)?;
                             done += 1;
                         }
-                        Ok(_) => {
+                        Ok(()) => {
                             last = format!("分段长度不符（{} != {expected}）", buf.len());
                             break;
                         }
-                        Err(error) => {
+                        Err(PieceReadError::Stopped) => return Err(EngineError::Cancelled),
+                        Err(PieceReadError::Io(error)) => {
                             last = error.to_string();
                             break;
                         }
@@ -251,7 +300,7 @@ pub fn download(
         return Err(EngineError::Http("没有可用的下载地址".into()));
     }
     let mirrors = prefer_cdn_mirrors(request_spec.urls);
-    let (total, ranged) = probe(&mirrors, &request_spec.headers)?;
+    let (total, ranged) = probe(&mirrors, &request_spec.headers, &cancel)?;
     if total == 0 {
         return Err(EngineError::Corrupt("文件长度为 0"));
     }
@@ -797,6 +846,93 @@ mod tests {
     }
 
     #[test]
+    fn cancel_interrupts_a_piece_that_is_still_streaming() {
+        // One 1 MiB piece at roughly 320 KiB/s takes about three seconds. A
+        // pause has to be noticed within a read slice, not after the piece.
+        let total = 1024 * 1024usize;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = stop.clone();
+        std::thread::spawn(move || {
+            while !server_stop.load(Ordering::Relaxed) {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                };
+                std::thread::spawn(move || {
+                    stream.set_nonblocking(false).ok();
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        if stream.read(&mut byte).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        head.push(byte[0]);
+                    }
+                    let probing = String::from_utf8_lossy(&head)
+                        .to_ascii_lowercase()
+                        .contains("range: bytes=0-0\r\n");
+                    let length = if probing { 1 } else { total };
+                    let header = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-{}/{total}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n",
+                        length - 1
+                    );
+                    if stream.write_all(header.as_bytes()).is_err() {
+                        return;
+                    }
+                    let mut sent = 0;
+                    while sent < length {
+                        let slice = (length - sent).min(64 * 1024);
+                        if stream.write_all(&vec![1u8; slice]).is_err() {
+                            return;
+                        }
+                        sent += slice;
+                        if !probing {
+                            std::thread::sleep(Duration::from_millis(200));
+                        }
+                    }
+                });
+            }
+        });
+
+        let directory =
+            std::env::temp_dir().join(format!("bewly-transfer-slow-cancel-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let destination = directory.join("video.m4s");
+        let _ = std::fs::remove_file(&destination);
+        let _ = std::fs::remove_file(sidecar::path_for(&destination));
+        let urls = vec![format!("http://127.0.0.1:{port}/file.bin")];
+        let cancel = Arc::new(AtomicBool::new(false));
+        let raise = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            raise.store(true, Ordering::Relaxed);
+        });
+        let started = std::time::Instant::now();
+        let error = download(
+            Request {
+                urls: &urls,
+                destination: &destination,
+                piece_length: total as u32,
+                connections: 1,
+                headers: vec![],
+            },
+            cancel,
+            |_, _| {},
+        )
+        .unwrap_err();
+        let elapsed = started.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        assert!(matches!(error, EngineError::Cancelled));
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "cancel took {elapsed:?} to be noticed"
+        );
+    }
+
+    #[test]
     fn resumes_a_run_after_the_connection_drops_mid_body() {
         let data = payload(8 * 1024);
         let server = Server::start_with(data.clone(), 0, 500, 3);
@@ -827,7 +963,7 @@ mod tests {
         // The probe goes through, then every piece request is refused with 403.
         let probe_ok = Server::start_with(payload(4 * 1024), 0, 403, 0);
         let refusing = Server::start_with(payload(4 * 1024), usize::MAX, 403, 0);
-        let (total, _) = probe(&[probe_ok.url()], &[]).unwrap();
+        let (total, _) = probe(&[probe_ok.url()], &[], &AtomicBool::new(false)).unwrap();
         assert_eq!(total, 4 * 1024);
         let mut cursor = 0;
         let mut buf = Vec::new();
