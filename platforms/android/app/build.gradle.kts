@@ -6,19 +6,45 @@ plugins {
 
 android {
   namespace = "io.bewly.download"
-  compileSdk = 37
+  compileSdk {
+    version = release(37) {
+      minorApiLevel = 0
+    }
+  }
   defaultConfig {
     applicationId = "io.bewly.download"
     minSdk = 26
     targetSdk = 37
     versionCode = 1
-    versionName = "1.0"
+    versionName = "0.44.7"
+
+    ndk {
+      abiFilters += "arm64-v8a"
+    }
+  }
+
+  androidResources {
+    localeFilters += listOf("zh-rCN", "zh", "en")
+  }
+
+  signingConfigs {
+    val storePath = System.getenv("BEWLY_ANDROID_KEYSTORE")
+    if (!storePath.isNullOrBlank()) {
+      create("release") {
+        storeFile = file(storePath)
+        storePassword = System.getenv("BEWLY_ANDROID_KEYSTORE_PASSWORD")
+        keyAlias = System.getenv("BEWLY_ANDROID_KEY_ALIAS")
+        keyPassword = System.getenv("BEWLY_ANDROID_KEY_PASSWORD")
+      }
+    }
   }
 
   buildTypes {
     release {
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
     }
   }
   compileOptions {
@@ -40,6 +66,7 @@ android {
     // (jniLibs/<abi>/libffmpeg.so) must exist as a file in nativeLibraryDir to run.
     jniLibs {
       useLegacyPackaging = true
+      excludes += "**/librusty_leveldb-*.so"
     }
   }
 }

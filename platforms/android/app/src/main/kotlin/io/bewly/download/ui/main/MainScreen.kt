@@ -3,27 +3,32 @@ package io.bewly.download.ui.main
 import android.content.Context
 import android.content.Intent
 import android.media.MediaScannerConnection
+import android.net.Uri
 import android.widget.Toast
-import androidx.core.content.FileProvider
-import java.io.File
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,37 +39,39 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -72,140 +79,207 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation3.runtime.NavKey
-import io.bewly.download.data.DefaultDataRepository
+import io.bewly.download.MediaStoreExporter
+import io.bewly.download.R
+import io.bewly.download.ui.theme.BewlyBewlyTheme
 import io.bewly.download.ui.theme.BiliBlue
 import io.bewly.download.ui.theme.BiliPink
-import io.bewly.download.ui.theme.BewlyBewlyTheme
+import java.io.File
 import java.util.Locale
 
 @Composable
 fun MainScreen(
-    onItemClick: (NavKey) -> Unit = {},
     modifier: Modifier = Modifier,
-    viewModel: MainScreenViewModel = viewModel { MainScreenViewModel(DefaultDataRepository()) },
+    viewModel: MainScreenViewModel = viewModel(),
+    onOpenLogin: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val benchState by viewModel.benchState.collectAsStateWithLifecycle()
 
-    LaunchedEffect(Unit) {
-        viewModel.initAndCheckStatus(context)
-    }
+    var pendingDeleteTask by remember { mutableStateOf<TaskItem?>(null) }
 
     MainScreenContent(
+        modifier = modifier,
         benchState = benchState,
+        onOpenLogin = onOpenLogin,
+        onNavigateToSettings = onNavigateToSettings,
         onVideoInputChange = viewModel::onVideoInputChange,
-        onClearVideoInput = viewModel::onClearVideoInput,
-        onPasteClipboard = viewModel::onPasteClipboard,
-        onSelectQuality = viewModel::setQuality,
-        onSelectOutputMode = viewModel::setOutputMode,
-        onSelectFilter = viewModel::setFilter,
-        onToggleDiagnostics = viewModel::toggleDiagnostics,
-        onSetDiagnosticsExpanded = viewModel::setDiagnosticsExpanded,
-        onSetCookieDialogVisible = viewModel::setCookieDialogVisible,
-        onSaveSessionCookie = viewModel::saveSessionCookie,
-        onRefreshStatus = { viewModel.initAndCheckStatus(context) },
-        onRestartService = { viewModel.restartService(context) },
-        onParseAndDownload = { viewModel.parseAndDownload(context, benchState.videoInput) },
-        onTestDownload = {
-            viewModel.onVideoInputChange("BV1xx411c7mD")
-            viewModel.parseAndDownload(context, "BV1xx411c7mD")
+        onClearInput = viewModel::onClearVideoInput,
+        onPasteClipboard = {
+            val clipText = clipboardManager.getText()?.text.orEmpty()
+            viewModel.onPasteClipboard(clipText)
         },
+        onInspectVideo = { viewModel.inspectVideo(context) },
+        onTestExample = { viewModel.inspectVideo(context, "BV1xx411c7mD") },
+        onQualityChange = viewModel::setQuality,
+        onCodecChange = viewModel::setCodec,
+        onAudioQualityChange = viewModel::setAudioQuality,
+        onOutputModeChange = viewModel::setOutputMode,
+        onToggleAttachment = viewModel::toggleAttachment,
+        onFilterChange = viewModel::setFilter,
+        onStartPendingTask = viewModel::startPendingTask,
+        onStartAllPending = viewModel::startAllPending,
         onPauseTask = viewModel::pauseTask,
+        onPauseAllActive = viewModel::pauseAllActive,
         onResumeTask = viewModel::resumeTask,
         onRetryTask = viewModel::retryTask,
-        onDeleteTask = viewModel::deleteTask,
-        onClearCompletedTasks = viewModel::clearCompletedTasks,
-        onDismissStatusMessage = viewModel::clearStatusMessage,
-        modifier = modifier
+        onRequestDeleteTask = { task -> pendingDeleteTask = task },
+        onClearCompleted = viewModel::clearCompletedTasks,
+        onDismissMessage = viewModel::clearStatusMessage,
+        onCopyPath = { path ->
+            clipboardManager.setText(AnnotatedString(path))
+            Toast.makeText(context, "已复制: $path", Toast.LENGTH_SHORT).show()
+        },
+        onOpenTarget = { uriOrPath, nameHint ->
+            val mime = nameHint?.let { MediaStoreExporter.mimeTypeFor(it) }
+            openMediaTarget(context, uriOrPath, mime)
+        }
     )
+
+    val inspected = benchState.inspectedVideo
+    if (inspected != null) {
+        VideoInspectBottomSheet(
+            inspected = inspected,
+            benchState = benchState,
+            onToggleCid = viewModel::toggleCidSelection,
+            onSelectAllCids = viewModel::selectAllCids,
+            onSwitchEpisode = { bvid -> viewModel.switchToCollectionEpisode(context, bvid) },
+            onQualityChange = viewModel::setQuality,
+            onCodecChange = viewModel::setCodec,
+            onAudioQualityChange = viewModel::setAudioQuality,
+            onOutputModeChange = viewModel::setOutputMode,
+            onToggleAttachment = viewModel::toggleAttachment,
+            onSubmit = { startNow -> viewModel.submitInspectedDownload(context, startNow) },
+            onDismiss = viewModel::dismissInspectedVideo
+        )
+    }
+
+    val deleteTarget = pendingDeleteTask
+    if (deleteTarget != null) {
+        DeleteTaskDialog(
+            task = deleteTarget,
+            onConfirm = { deleteFiles ->
+                viewModel.deleteTask(context, deleteTarget.id, deleteTarget.status, deleteFiles)
+                pendingDeleteTask = null
+            },
+            onDismiss = { pendingDeleteTask = null }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun MainScreenContent(
+fun MainScreenContent(
+    modifier: Modifier = Modifier,
     benchState: BenchUiState,
+    onOpenLogin: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
     onVideoInputChange: (String) -> Unit,
-    onClearVideoInput: () -> Unit = {},
-    onPasteClipboard: (String) -> Unit = {},
-    onSelectQuality: (Int) -> Unit = {},
-    onSelectOutputMode: (String) -> Unit = {},
-    onSelectFilter: (TaskFilter) -> Unit = {},
-    onToggleDiagnostics: () -> Unit = {},
-    onSetDiagnosticsExpanded: (Boolean) -> Unit = {},
-    onSetCookieDialogVisible: (Boolean) -> Unit = {},
-    onSaveSessionCookie: (String) -> Unit = {},
-    onRefreshStatus: () -> Unit,
-    onRestartService: () -> Unit,
-    onParseAndDownload: () -> Unit,
-    onTestDownload: () -> Unit,
+    onClearInput: () -> Unit = {},
+    onPasteClipboard: () -> Unit = {},
+    onInspectVideo: () -> Unit,
+    onTestExample: () -> Unit,
+    onQualityChange: (Int) -> Unit = {},
+    onCodecChange: (String) -> Unit = {},
+    onAudioQualityChange: (String) -> Unit = {},
+    onOutputModeChange: (String) -> Unit = {},
+    onToggleAttachment: (String) -> Unit = {},
+    onFilterChange: (TaskFilter) -> Unit = {},
+    onStartPendingTask: (String) -> Unit = {},
+    onStartAllPending: () -> Unit = {},
     onPauseTask: (String) -> Unit,
+    onPauseAllActive: () -> Unit = {},
     onResumeTask: (String) -> Unit,
-    onRetryTask: (String) -> Unit = onResumeTask,
-    onDeleteTask: (String, String) -> Unit,
-    onClearCompletedTasks: () -> Unit = {},
-    onDismissStatusMessage: () -> Unit = {},
-    modifier: Modifier = Modifier
+    onRetryTask: (String) -> Unit = {},
+    onRequestDeleteTask: (TaskItem) -> Unit,
+    onClearCompleted: () -> Unit = {},
+    onDismissMessage: () -> Unit = {},
+    onCopyPath: (String) -> Unit = {},
+    onOpenTarget: (String, String?) -> Unit = { _, _ -> }
 ) {
-    val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-
-    // Cookie configuration dialog
-    if (benchState.isCookieDialogVisible) {
-        CookieDialog(
-            currentCookie = benchState.sessionCookie,
-            onSave = onSaveSessionCookie,
-            onDismiss = { onSetCookieDialogVisible(false) }
-        )
+    val scrollState = rememberScrollState()
+    val filteredTasks = remember(benchState.tasks, benchState.selectedFilter) {
+        when (benchState.selectedFilter) {
+            TaskFilter.ALL -> benchState.tasks
+            TaskFilter.ACTIVE -> benchState.tasks.filter {
+                it.status in setOf("downloading", "queued", "resolving", "muxing", "postprocessing", "paused")
+            }
+            TaskFilter.PENDING -> benchState.tasks.filter { it.status == "pending" }
+            TaskFilter.COMPLETED -> benchState.tasks.filter { it.status == "completed" }
+            TaskFilter.FAILED -> benchState.tasks.filter { it.status == "failed" || it.status == "cancelled" }
+        }
     }
 
+    val isOnline = benchState.isJniOk && benchState.isServiceRunning && benchState.rpcHealth.startsWith("健康")
+    val hasPending = benchState.tasks.any { it.status == "pending" }
+    val hasActive = benchState.tasks.any {
+        it.status in setOf("downloading", "queued", "resolving", "muxing", "postprocessing")
+    }
+    val hasCompleted = benchState.tasks.any { it.status == "completed" }
+
     Scaffold(
-        modifier = modifier,
+        modifier = modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "BewlyBewly 下载",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_bewly_brand),
+                            contentDescription = "BewlyBewly Logo",
+                            modifier = Modifier.size(28.dp)
                         )
                         Text(
-                            text = "Rust 高速分片引擎",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "Bewly 下载器",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 },
                 actions = {
-                    val isHealthy = benchState.isJniOk && benchState.isServiceRunning
-                    val statusText = if (isHealthy) "引擎在线" else "点击诊断"
-                    val dotColor = if (isHealthy) Color(0xFF2E7D32) else Color(0xFFE65100)
-                    val bgTint = if (isHealthy) Color(0xFFE8F5E9) else Color(0xFFFFF3E0)
-
                     Surface(
-                        onClick = onToggleDiagnostics,
+                        onClick = onOpenLogin,
                         shape = RoundedCornerShape(16.dp),
-                        color = bgTint,
-                        modifier = Modifier.padding(end = 12.dp)
+                        color = if (benchState.isSessionConfigured) Color(0xFFE8F5E9) else BiliPink.copy(alpha = 0.14f),
+                        modifier = Modifier.padding(end = 6.dp)
+                    ) {
+                        Text(
+                            text = if (benchState.isSessionConfigured) "✓ 已登录" else "登录账号",
+                            color = if (benchState.isSessionConfigured) Color(0xFF1B5E20) else BiliPink,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                    Surface(
+                        onClick = onNavigateToSettings,
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isOnline) Color(0xFFE1F5FE) else Color(0xFFFFECEB),
+                        modifier = Modifier.padding(end = 10.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
-                                    .background(dotColor, CircleShape)
+                                    .size(7.dp)
+                                    .background(if (isOnline) BiliBlue else Color(0xFFC62828), CircleShape)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = statusText,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = dotColor
+                                text = if (isOnline) "引擎就绪" else "引擎未就绪",
+                                color = if (isOnline) Color(0xFF0277BD) else Color(0xFFC62828),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
@@ -221,435 +295,569 @@ internal fun MainScreenContent(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Collapsible Engine Diagnostics Card (Hidden by default when healthy)
-            AnimatedVisibility(
-                visible = benchState.isDiagnosticsExpanded,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "引擎运行状态与诊断",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            IconButton(
-                                onClick = { onSetDiagnosticsExpanded(false) },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Text(
-                                    "✕",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    "JNI Ping: ${benchState.jniStatus}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                                Text(
-                                    "RPC 端点: ${benchState.rpcEndpoint}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                                Text(
-                                    "RPC 健康: ${benchState.rpcHealth}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (benchState.rpcHealth.contains("在线") || benchState.rpcHealth.contains("ok"))
-                                        Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
-                                )
-                                if (benchState.downloadDirectory.isNotEmpty()) {
-                                    Text(
-                                        "存储路径: ${benchState.downloadDirectory}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                                Text(
-                                    "账号 Cookie: ${if (benchState.isSessionConfigured) "已配置" else "未配置 (普通清晰度)"}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (benchState.isSessionConfigured) BiliPink else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            OutlinedButton(
-                                onClick = onRefreshStatus,
-                                modifier = Modifier.padding(end = 8.dp)
-                            ) {
-                                Text("刷新状态")
-                            }
-                            FilledTonalButton(
-                                onClick = onRestartService
-                            ) {
-                                Text("重启引擎服务")
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Card 1: 新建下载
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+            // Login reminder banner when no cookie is present
+            if (!benchState.isSessionConfigured) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "新建下载",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            text = "未登录将以游客清晰度（最高 480P / 原生音频）下载；登录可解锁 1080P / 4K",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.weight(1f)
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(
-                                onClick = onTestDownload,
-                                enabled = !benchState.isProcessing
-                            ) {
-                                Text("⚡ 一键示例", fontSize = 13.sp)
-                            }
-                            TextButton(
-                                onClick = { onSetCookieDialogVisible(true) }
-                            ) {
-                                Text(
-                                    if (benchState.isSessionConfigured) "🔑 Cookie(已配置)" else "🔑 账号 Cookie",
-                                    fontSize = 13.sp,
-                                    color = if (benchState.isSessionConfigured) BiliPink else MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-
-                    // Input TextField
-                    OutlinedTextField(
-                        value = benchState.videoInput,
-                        onValueChange = onVideoInputChange,
-                        placeholder = {
-                            Text(
-                                "粘贴 B 站分享口令、视频链接或 BV 号",
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                            )
-                        },
-                        trailingIcon = {
-                            if (benchState.videoInput.isNotEmpty()) {
-                                IconButton(onClick = onClearVideoInput) {
-                                    Text(
-                                        "✕",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Action buttons: Paste & Recognize + Immediate Download
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                val clipText = clipboardManager.getText()?.text.orEmpty()
-                                onPasteClipboard(clipText)
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("📋 粘贴并识别", fontWeight = FontWeight.Medium)
-                        }
-
-                        Button(
-                            onClick = onParseAndDownload,
-                            enabled = !benchState.isProcessing && benchState.videoInput.isNotBlank(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            ),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            if (benchState.isProcessing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                            }
-                            Text("立即下载", fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    // Quality & Output Selection Chips
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Quality Chips
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                "画质:",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(end = 4.dp)
-                            )
-                            AVAILABLE_QUALITIES.forEach { item ->
-                                val selected = benchState.selectedQuality == item.quality
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { onSelectQuality(item.quality) },
-                                    label = { Text(item.label, fontSize = 12.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                            }
-                        }
-
-                        // Mode Chips
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                "模式:",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(end = 4.dp)
-                            )
-                            AVAILABLE_OUTPUTS.forEach { item ->
-                                val selected = benchState.selectedOutputMode == item.mode
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { onSelectOutputMode(item.mode) },
-                                    label = { Text(item.label, fontSize = 12.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Status / Feedback Banner
-                    benchState.statusMessage?.let { msg ->
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    text = msg,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(
-                                    onClick = onDismissStatusMessage,
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Text(
-                                        "✕",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                }
-                            }
+                        TextButton(onClick = onOpenLogin) {
+                            Text("立即登录", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
 
-            // Card 2: 任务管理器与分类列表
+            // Input & Parse Card
             Card(
-                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    val allTasks = benchState.tasks
-                    val activeCount = allTasks.count {
-                        it.status in listOf("downloading", "queued", "resolving", "muxing", "postprocessing", "pending")
-                    }
-                    val completedCount = allTasks.count { it.status == "completed" }
-                    val failedCount = allTasks.count { it.status in listOf("failed", "cancelled") }
-
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "下载任务管理",
+                            text = "新建下载任务",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        if (completedCount > 0) {
-                            TextButton(onClick = onClearCompletedTasks) {
-                                Text("清理已完成", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-                            }
+                        FilledTonalButton(
+                            onClick = onPasteClipboard,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text("粘贴并识别", fontSize = 12.sp)
                         }
                     }
 
-                    // Category Tabs
-                    val filters = listOf(
-                        TaskFilter.ALL to "全部 (${allTasks.size})",
-                        TaskFilter.ACTIVE to "下载中 ($activeCount)",
-                        TaskFilter.COMPLETED to "已完成 ($completedCount)",
-                        TaskFilter.FAILED to "失败 ($failedCount)"
-                    )
-                    val selectedIndex = filters.indexOfFirst { it.first == benchState.selectedFilter }.coerceAtLeast(0)
-
-                    PrimaryTabRow(
-                        selectedTabIndex = selectedIndex,
-                        containerColor = Color.Transparent,
-                        contentColor = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        filters.forEachIndexed { index, (filter, label) ->
-                            Tab(
-                                selected = selectedIndex == index,
-                                onClick = { onSelectFilter(filter) },
-                                text = {
-                                    Text(
-                                        text = label,
-                                        fontSize = 13.sp,
-                                        fontWeight = if (selectedIndex == index) FontWeight.Bold else FontWeight.Normal
-                                    )
+                    OutlinedTextField(
+                        value = benchState.videoInput,
+                        onValueChange = onVideoInputChange,
+                        placeholder = {
+                            Text("粘贴 B 站视频链接、b23.tv 短链或 BV/AV 号（也支持从 B 站 App 分享到本应用）", fontSize = 12.sp)
+                        },
+                        singleLine = true,
+                        trailingIcon = {
+                            if (benchState.videoInput.isNotEmpty()) {
+                                IconButton(onClick = onClearInput) {
+                                    Text("✕", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Quick Quality & Mode Presets
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("预设:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        listOf(0, 120, 116, 80, 64).forEach { q ->
+                            val label = AVAILABLE_QUALITIES.firstOrNull { it.quality == q }?.label ?: "${q}P"
+                            FilterChip(
+                                selected = benchState.selectedQuality == q && benchState.selectedOutputMode in listOf("video", "silent"),
+                                onClick = {
+                                    if (benchState.selectedOutputMode !in listOf("video", "silent")) {
+                                        onOutputModeChange("video")
+                                    }
+                                    onQualityChange(q)
+                                },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                        listOf("audio", "mp3").forEach { mode ->
+                            val label = AVAILABLE_OUTPUTS.firstOrNull { it.mode == mode }?.label ?: mode
+                            FilterChip(
+                                selected = benchState.selectedOutputMode == mode,
+                                onClick = { onOutputModeChange(mode) },
+                                label = { Text(label, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = BiliBlue.copy(alpha = 0.16f),
+                                    selectedLabelColor = BiliBlue
+                                )
                             )
                         }
                     }
 
-                    // Filtered Task List
-                    val filteredTasks = when (benchState.selectedFilter) {
-                        TaskFilter.ALL -> allTasks
-                        TaskFilter.ACTIVE -> allTasks.filter {
-                            it.status in listOf("downloading", "queued", "resolving", "muxing", "postprocessing", "pending")
-                        }
-                        TaskFilter.COMPLETED -> allTasks.filter { it.status == "completed" }
-                        TaskFilter.FAILED -> allTasks.filter { it.status in listOf("failed", "cancelled") }
-                    }
-
-                    if (filteredTasks.isEmpty()) {
-                        Box(
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onInspectVideo,
+                            enabled = !benchState.isProcessing && benchState.videoInput.isNotBlank(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            contentAlignment = Alignment.Center
+                                .weight(1f)
+                                .height(46.dp)
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            if (benchState.isProcessing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("解析中...", fontWeight = FontWeight.Bold)
+                            } else {
+                                Text("解析并配置下载", fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = onTestExample,
+                            enabled = !benchState.isProcessing,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.height(46.dp)
+                        ) {
+                            Text("⚡ 示例", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            // Status toast banner
+            AnimatedVisibility(
+                visible = !benchState.statusMessage.isNullOrEmpty(),
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = benchState.statusMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onDismissMessage) {
+                            Text("关闭", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+
+            // Task Queue Header & Batch Actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "任务队列 (${benchState.tasks.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (hasPending) {
+                        TextButton(onClick = onStartAllPending) {
+                            Text("全部开始", fontSize = 12.sp, color = BiliBlue)
+                        }
+                    }
+                    if (hasActive) {
+                        TextButton(onClick = onPauseAllActive) {
+                            Text("全部暂停", fontSize = 12.sp)
+                        }
+                    }
+                    if (hasCompleted) {
+                        TextButton(onClick = onClearCompleted) {
+                            Text("清理已完成", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            // Filter Tabs
+            PrimaryScrollableTabRow(
+                selectedTabIndex = TaskFilter.entries.indexOf(benchState.selectedFilter),
+                containerColor = Color.Transparent,
+                edgePadding = 0.dp
+            ) {
+                TaskFilter.entries.forEach { filter ->
+                    val count = when (filter) {
+                        TaskFilter.ALL -> benchState.tasks.size
+                        TaskFilter.ACTIVE -> benchState.tasks.count {
+                            it.status in setOf("downloading", "queued", "resolving", "muxing", "postprocessing", "paused")
+                        }
+                        TaskFilter.PENDING -> benchState.tasks.count { it.status == "pending" }
+                        TaskFilter.COMPLETED -> benchState.tasks.count { it.status == "completed" }
+                        TaskFilter.FAILED -> benchState.tasks.count { it.status == "failed" || it.status == "cancelled" }
+                    }
+                    Tab(
+                        selected = benchState.selectedFilter == filter,
+                        onClick = { onFilterChange(filter) },
+                        text = {
+                            Text(
+                                text = "${filter.label} ($count)",
+                                fontSize = 12.sp,
+                                fontWeight = if (benchState.selectedFilter == filter) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    )
+                }
+            }
+
+            // Task Cards
+            if (filteredTasks.isEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = if (benchState.tasks.isEmpty()) "暂无下载任务" else "当前分组下没有任务",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "输入 BV 号、链接或从 B 站分享即可开始",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    filteredTasks.forEach { task ->
+                        TaskCard(
+                            task = task,
+                            onStartPending = { onStartPendingTask(task.id) },
+                            onPause = { onPauseTask(task.id) },
+                            onResume = { onResumeTask(task.id) },
+                            onRetry = { onRetryTask(task.id) },
+                            onDelete = { onRequestDeleteTask(task) },
+                            onCopyPath = onCopyPath,
+                            onOpenTarget = onOpenTarget
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun VideoInspectBottomSheet(
+    inspected: InspectedVideo,
+    benchState: BenchUiState,
+    onToggleCid: (Long) -> Unit,
+    onSelectAllCids: (Boolean) -> Unit,
+    onSwitchEpisode: (String) -> Unit,
+    onQualityChange: (Int) -> Unit,
+    onCodecChange: (String) -> Unit,
+    onAudioQualityChange: (String) -> Unit,
+    onOutputModeChange: (String) -> Unit,
+    onToggleAttachment: (String) -> Unit,
+    onSubmit: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 660.dp)
+                .padding(horizontal = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+            Text(
+                text = inspected.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = listOfNotNull(
+                    inspected.author.takeIf { it.isNotEmpty() }?.let { "UP主: $it" },
+                    inspected.bvid.takeIf { it.isNotEmpty() }
+                ).joinToString("  •  "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Pages selection (for multi-P videos or single-P confirmation)
+            if (inspected.pages.isNotEmpty()) {
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "选择分 P（已选 ${benchState.selectedCids.size}/${inspected.pages.size}）",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row {
+                        TextButton(onClick = { onSelectAllCids(true) }) {
+                            Text("全选", fontSize = 12.sp)
+                        }
+                        TextButton(onClick = { onSelectAllCids(false) }) {
+                            Text("清空", fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 180.dp)
+                ) {
+                    LazyColumn(modifier = Modifier.padding(4.dp)) {
+                        items(inspected.pages, key = { it.cid }) { page ->
+                            val checked = page.cid in benchState.selectedCids
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onToggleCid(page.cid) }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { onToggleCid(page.cid) }
+                                )
                                 Text(
-                                    text = when (benchState.selectedFilter) {
-                                        TaskFilter.ALL -> "暂无任务，粘贴 B 站链接开始高速下载"
-                                        TaskFilter.ACTIVE -> "当前没有正在下载的任务"
-                                        TaskFilter.COMPLETED -> "暂无已完成的下载任务"
-                                        TaskFilter.FAILED -> "太棒了，没有下载失败的任务"
+                                    text = "P${page.page}  ${page.title}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (page.duration > 0L) {
+                                    Text(
+                                        text = formatDuration(page.duration),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Collection episodes switcher if available
+            if (inspected.collectionSections.isNotEmpty()) {
+                HorizontalDivider()
+                Text(
+                    text = "所属合集：${inspected.collectionTitle ?: "视频合集"}（点击切换其它集数）",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    inspected.collectionSections.forEach { section ->
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            section.videos.take(12).forEach { ep ->
+                                FilterChip(
+                                    selected = ep.bvid.equals(inspected.bvid, ignoreCase = true),
+                                    onClick = {
+                                        if (ep.available && !ep.bvid.equals(inspected.bvid, ignoreCase = true)) {
+                                            onSwitchEpisode(ep.bvid)
+                                        }
                                     },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    enabled = ep.available,
+                                    label = {
+                                        Text(
+                                            text = ep.title.ifEmpty { ep.bvid },
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                 )
                             }
                         }
-                    } else {
-                        filteredTasks.forEach { task ->
-                            TaskItemCard(
-                                task = task,
-                                onPause = { onPauseTask(task.id) },
-                                onResume = { onResumeTask(task.id) },
-                                onRetry = { onRetryTask(task.id) },
-                                onDelete = { onDeleteTask(task.id, task.status) },
-                                onCopyPath = { path ->
-                                    clipboardManager.setText(AnnotatedString(path))
-                                    Toast.makeText(context, "路径已复制到剪贴板", Toast.LENGTH_SHORT).show()
-                                },
-                                onOpenFile = { path ->
-                                    openMediaFile(context, path)
-                                }
-                            )
-                        }
                     }
+                }
+            }
+
+            HorizontalDivider()
+
+            // Output mode
+            Text("输出类型", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                AVAILABLE_OUTPUTS.forEach { opt ->
+                    FilterChip(
+                        selected = benchState.selectedOutputMode == opt.mode,
+                        onClick = { onOutputModeChange(opt.mode) },
+                        label = { Text(opt.label, fontSize = 12.sp) }
+                    )
+                }
+            }
+
+            // Video quality & codec (when downloading video/silent)
+            if (benchState.selectedOutputMode in listOf("video", "silent")) {
+                Text("画质选择", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                if (!benchState.isSessionConfigured && benchState.selectedQuality >= 64) {
+                    Text(
+                        text = "提示：未登录 B 站账号时固定选择 720P 以上画质可能会被接口拒绝，推荐选「最高可用」或先登录账号。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFE65100)
+                    )
+                }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AVAILABLE_QUALITIES.forEach { q ->
+                        FilterChip(
+                            selected = benchState.selectedQuality == q.quality,
+                            onClick = { onQualityChange(q.quality) },
+                            label = { Text(q.label, fontSize = 12.sp) }
+                        )
+                    }
+                }
+
+                Text("视频编码", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AVAILABLE_CODECS.forEach { c ->
+                        FilterChip(
+                            selected = benchState.selectedCodec == c.codec,
+                            onClick = { onCodecChange(c.codec) },
+                            label = { Text(c.label, fontSize = 12.sp) }
+                        )
+                    }
+                }
+            }
+
+            // Audio quality
+            if (benchState.selectedOutputMode != "silent") {
+                Text("音质偏好", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AVAILABLE_AUDIO_QUALITIES.forEach { aq ->
+                        FilterChip(
+                            selected = benchState.selectedAudioQuality == aq.audioQuality,
+                            onClick = { onAudioQualityChange(aq.audioQuality) },
+                            label = { Text(aq.label, fontSize = 12.sp) }
+                        )
+                    }
+                }
+            }
+
+            // Attachments
+            Text("附属文件（可多选，完成后同步导出）", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                AVAILABLE_ATTACHMENTS.forEach { att ->
+                    FilterChip(
+                        selected = att.key in benchState.selectedAttachments,
+                        onClick = { onToggleAttachment(att.key) },
+                        label = { Text(att.label, fontSize = 12.sp) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            }
+
+            HorizontalDivider()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp, bottom = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { onSubmit(false) },
+                    enabled = !benchState.isProcessing && benchState.selectedCids.isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                ) {
+                    Text("加入待下载")
+                }
+                Button(
+                    onClick = { onSubmit(true) },
+                    enabled = !benchState.isProcessing && benchState.selectedCids.isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1.3f)
+                        .height(48.dp)
+                ) {
+                    Text("立即开始下载 (${benchState.selectedCids.size})", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -657,103 +865,83 @@ internal fun MainScreenContent(
 }
 
 @Composable
-fun TaskItemCard(
+fun TaskCard(
     task: TaskItem,
+    onStartPending: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
     onDelete: () -> Unit,
     onCopyPath: (String) -> Unit,
-    onOpenFile: (String) -> Unit
+    onOpenTarget: (String, String?) -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Title & Status Badge
             Row(
-                verticalAlignment = Alignment.Top,
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+                verticalAlignment = Alignment.Top
             ) {
-                Text(
-                    text = task.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 8.dp)
-                )
-                StatusChip(status = task.status)
-            }
-
-            // Subtitle: BV ID badge + Downloaded / Total size
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (task.bvid.isNotEmpty()) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = task.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (task.bvid.isNotEmpty()) {
                         Text(
                             text = task.bvid,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                Text(
-                    text = "${formatBytes(task.downloaded)} / ${formatBytes(task.total)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(modifier = Modifier.width(8.dp))
+                StatusChip(status = task.status)
             }
 
-            // Progress Bar & Speed (for active or partial downloads)
             val progressFraction = (task.progress / 100.0).toFloat().coerceIn(0f, 1f)
             LinearProgressIndicator(
                 progress = { progressFraction },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)),
+                    .height(7.dp),
                 color = when (task.status) {
-                    "completed" -> Color(0xFF2E7D32)
-                    "failed" -> MaterialTheme.colorScheme.error
+                    "completed" -> Color(0xFF4CAF50)
+                    "failed", "cancelled" -> MaterialTheme.colorScheme.error
+                    "paused", "pending" -> Color(0xFF90A4AE)
                     else -> MaterialTheme.colorScheme.primary
                 },
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
 
             Row(
-                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                val downloadedStr = formatBytes(task.downloaded)
+                val totalStr = if (task.total > 0) formatBytes(task.total) else "未知大小"
                 Text(
-                    text = "${String.format(Locale.US, "%.1f", task.progress)}%",
+                    text = String.format(Locale.US, "%.1f%% · %s / %s", task.progress, downloadedStr, totalStr),
                     style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary
                 )
                 if (task.status == "downloading") {
                     Text(
-                        text = "🚀 ${formatSpeed(task.speed)}",
+                        text = "⚡ ${formatSpeed(task.speed)}",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = BiliBlue
@@ -761,10 +949,12 @@ fun TaskItemCard(
                 }
             }
 
-            // Success banner when completed
-            if (task.status == "completed" && !task.output.isNullOrEmpty()) {
-                val outPath = task.output
-                val fileName = outPath.substringAfterLast('/')
+            // Completed banner preferring public MediaStore export location
+            if (task.status == "completed" && (!task.exportedUri.isNullOrEmpty() || !task.output.isNullOrEmpty())) {
+                val openTarget = task.exportedUri ?: task.output.orEmpty()
+                val rawName = task.output?.substringAfterLast('/') ?: "${task.title}.mp4"
+                val displayText = task.exportedDisplay ?: rawName
+
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = Color(0xFFE8F5E9),
@@ -772,11 +962,11 @@ fun TaskItemCard(
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         Text(
-                            text = "✓ $fileName",
+                            text = "✓ 已保存: $displayText",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = Color(0xFF1B5E20),
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(6.dp))
@@ -786,13 +976,13 @@ fun TaskItemCard(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             TextButton(
-                                onClick = { onCopyPath(outPath) },
+                                onClick = { onCopyPath(displayText) },
                                 modifier = Modifier.padding(end = 6.dp)
                             ) {
                                 Text("复制路径", fontSize = 11.sp, color = Color(0xFF1B5E20))
                             }
                             Button(
-                                onClick = { onOpenFile(outPath) },
+                                onClick = { onOpenTarget(openTarget, rawName) },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
@@ -803,7 +993,6 @@ fun TaskItemCard(
                 }
             }
 
-            // Error banner when failed
             if (task.status == "failed" || task.error.isNotEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
@@ -819,13 +1008,21 @@ fun TaskItemCard(
                 }
             }
 
-            // Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 when (task.status) {
+                    "pending" -> {
+                        FilledTonalButton(
+                            onClick = onStartPending,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Text("开始下载", fontSize = 12.sp)
+                        }
+                    }
                     "downloading", "queued", "resolving", "muxing", "postprocessing" -> {
                         OutlinedButton(
                             onClick = onPause,
@@ -859,7 +1056,7 @@ fun TaskItemCard(
                     onClick = onDelete,
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f),
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f),
                         contentColor = MaterialTheme.colorScheme.onErrorContainer
                     )
                 ) {
@@ -871,8 +1068,42 @@ fun TaskItemCard(
 }
 
 @Composable
+fun DeleteTaskDialog(
+    task: TaskItem,
+    onConfirm: (deleteFiles: Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("删除下载任务", fontWeight = FontWeight.Bold) },
+        text = {
+            Text("确认删除「${task.title}」？您可以选择仅移除任务记录，或连同本地与媒体库导出的文件一并删除。")
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(true) },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("删除记录与文件")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { onConfirm(false) }) {
+                    Text("仅移除记录")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            }
+        }
+    )
+}
+
+@Composable
 fun StatusChip(status: String) {
     val (label, bg, fg) = when (status) {
+        "pending" -> Triple("待下载", Color(0xFFF3E5F5), Color(0xFF6A1B9A))
         "downloading" -> Triple("下载中", Color(0xFFE1F5FE), Color(0xFF007BB2))
         "resolving" -> Triple("解析中", Color(0xFFFFF3E0), Color(0xFFE65100))
         "muxing" -> Triple("合成中", Color(0xFFEDE7F6), Color(0xFF5E35B1))
@@ -910,7 +1141,7 @@ fun CookieDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("B 站账号 Cookie (可选)", fontWeight = FontWeight.Bold)
+            Text("手动导入 B 站 Cookie", fontWeight = FontWeight.Bold)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -967,6 +1198,51 @@ fun formatBytes(bytes: Long): String {
 
 fun formatSpeed(speed: Long): String = "${formatBytes(speed)}/s"
 
+fun formatDuration(seconds: Long): String {
+    val s = seconds.coerceAtLeast(0L)
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) {
+        String.format(Locale.US, "%d:%02d:%02d", h, m, sec)
+    } else {
+        String.format(Locale.US, "%02d:%02d", m, sec)
+    }
+}
+
+fun openMediaTarget(context: Context, uriOrPath: String, mimeHint: String? = null) {
+    try {
+        if (uriOrPath.startsWith("content://")) {
+            val uri = Uri.parse(uriOrPath)
+            val mime = mimeHint
+                ?: context.contentResolver.getType(uri)
+                ?: "*/*"
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(Intent.createChooser(intent, "打开文件"))
+            return
+        }
+
+        val file = File(uriOrPath)
+        if (!file.exists()) {
+            Toast.makeText(context, "文件不存在: $uriOrPath", Toast.LENGTH_SHORT).show()
+            return
+        }
+        MediaScannerConnection.scanFile(context, arrayOf(uriOrPath), null, null)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val mime = mimeHint ?: MediaStoreExporter.mimeTypeFor(file.name)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(Intent.createChooser(intent, "打开文件"))
+    } catch (e: Exception) {
+        Toast.makeText(context, "调起打开失败: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
 @Preview(showBackground = true)
 @Composable
 fun MainScreenPreview() {
@@ -1002,38 +1278,17 @@ fun MainScreenPreview() {
                         downloaded = 18400000,
                         total = 18400000,
                         error = "",
-                        output = "/storage/emulated/0/Download/爱能做到的还有什么.m4a"
+                        output = "/storage/emulated/0/Download/爱能做到的还有什么.m4a",
+                        exportedDisplay = "Music/BewlyBewly/爱能做到的还有什么.m4a"
                     )
                 )
             ),
             onVideoInputChange = {},
-            onRefreshStatus = {},
-            onRestartService = {},
-            onParseAndDownload = {},
-            onTestDownload = {},
+            onInspectVideo = {},
+            onTestExample = {},
             onPauseTask = {},
             onResumeTask = {},
-            onDeleteTask = { _, _ -> }
+            onRequestDeleteTask = {}
         )
-    }
-}
-
-fun openMediaFile(context: Context, filePath: String) {
-    try {
-        val file = File(filePath)
-        if (!file.exists()) {
-            Toast.makeText(context, "文件不存在: $filePath", Toast.LENGTH_SHORT).show()
-            return
-        }
-        MediaScannerConnection.scanFile(context, arrayOf(filePath), null, null)
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val mime = if (filePath.endsWith(".mp4", ignoreCase = true)) "video/*" else "audio/*"
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mime)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(Intent.createChooser(intent, "播放文件"))
-    } catch (e: Exception) {
-        Toast.makeText(context, "调起播放器失败: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }

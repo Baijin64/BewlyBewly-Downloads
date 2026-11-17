@@ -52,13 +52,28 @@ class MainScreenViewModelTest {
     viewModel.setQuality(120)
     assertEquals(120, viewModel.benchState.value.selectedQuality)
 
+    viewModel.setCodec("hevc")
+    assertEquals("hevc", viewModel.benchState.value.selectedCodec)
+
+    viewModel.setAudioQuality("hires")
+    assertEquals("hires", viewModel.benchState.value.selectedAudioQuality)
+
     viewModel.setOutputMode("audio")
     assertEquals("audio", viewModel.benchState.value.selectedOutputMode)
+
+    viewModel.toggleAttachment("cover")
+    viewModel.toggleAttachment("ass")
+    assertEquals(setOf("cover", "ass"), viewModel.benchState.value.selectedAttachments)
+    viewModel.toggleAttachment("cover")
+    assertEquals(setOf("ass"), viewModel.benchState.value.selectedAttachments)
   }
 
   @Test
   fun setFilter_updatesState() {
     val viewModel = MainScreenViewModel(FakeMyModelRepository())
+    viewModel.setFilter(TaskFilter.PENDING)
+    assertEquals(TaskFilter.PENDING, viewModel.benchState.value.selectedFilter)
+
     viewModel.setFilter(TaskFilter.COMPLETED)
     assertEquals(TaskFilter.COMPLETED, viewModel.benchState.value.selectedFilter)
   }

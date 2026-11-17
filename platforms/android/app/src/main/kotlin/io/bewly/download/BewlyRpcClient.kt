@@ -26,7 +26,7 @@ class BewlyRpcClient(
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.connectTimeout = 4000
-            conn.readTimeout = 20000
+            conn.readTimeout = 30000
             conn.doOutput = true
             conn.doInput = true
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -75,11 +75,13 @@ class BewlyRpcClient(
         return call("setSession", params)
     }
 
+    fun configure(patch: JSONObject): RpcResult = call("configure", patch)
+
     fun configure(directory: String): RpcResult {
         val patch = JSONObject().apply {
             put("directory", directory)
         }
-        return call("configure", patch)
+        return configure(patch)
     }
 
     fun inspect(video: String): RpcResult {
@@ -94,10 +96,11 @@ class BewlyRpcClient(
         cids: List<Long>,
         options: JSONObject = JSONObject().apply {
             put("quality", 80)
-            put("codec", "hev1")
+            put("codec", "auto")
             put("format", "mp4")
             put("outputs", JSONArray().apply { put("video") })
-        }
+        },
+        start: Boolean = true
     ): RpcResult {
         val cidsArray = JSONArray().apply {
             cids.forEach { put(it) }
@@ -107,12 +110,22 @@ class BewlyRpcClient(
             put("cids", cidsArray)
             put("options", options)
         }
-        return call("createTasks", params)
+        return call(if (start) "createTasks" else "stageTasks", params)
     }
 
-    fun queryTasks(filter: String = "all"): RpcResult {
+    fun queryTasks(
+        filter: String = "all",
+        page: Int = 1,
+        pageSize: Int = 100,
+        search: String = ""
+    ): RpcResult {
         val params = JSONObject().apply {
             put("filter", filter)
+            put("page", page)
+            put("pageSize", pageSize)
+            if (search.isNotBlank()) {
+                put("search", search)
+            }
         }
         return call("queryTasks", params)
     }
@@ -125,10 +138,29 @@ class BewlyRpcClient(
         return call("taskAction", params)
     }
 
-    fun clearCompletedTasks(): RpcResult {
+    fun batchAction(
+        action: String,
+        all: String? = null,
+        ids: List<String>? = null
+    ): RpcResult {
         val params = JSONObject().apply {
-            put("action", "clearCompleted")
+            put("action", action)
+            if (!all.isNullOrEmpty()) {
+                put("all", all)
+            }
+            if (!ids.isNullOrEmpty()) {
+                put("ids", JSONArray().apply { ids.forEach { put(it) } })
+            }
         }
         return call("batchAction", params)
+    }
+
+    fun clearCompletedTasks(): RpcResult = batchAction(action = "clearCompleted")
+
+    fun tool(op: String, extra: JSONObject = JSONObject()): RpcResult {
+        val params = JSONObject(extra.toString()).apply {
+            put("op", op)
+        }
+        return call("tool", params)
     }
 }

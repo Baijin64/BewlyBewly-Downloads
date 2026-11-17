@@ -31,44 +31,52 @@ class BewlyNativeTest {
         val started = BewlyNative.startService(dataDir, "service")
         assertTrue("Service should start successfully", started)
 
-        // 等待服务启动并生成 connection.json
+        // 等待服务启动并生成可连通的 connection.json
         val connFile = File(context.filesDir, "connection.json")
-        var waited = 0
-        while (!connFile.exists() && waited < 3000) {
-            Thread.sleep(100)
-            waited += 100
+        var responseText = ""
+        var responseCode = -1
+        val deadline = System.currentTimeMillis() + 5000L
+        var lastError: Throwable? = null
+
+        while (System.currentTimeMillis() < deadline) {
+            if (connFile.exists()) {
+                try {
+                    val connJson = JSONObject(connFile.readText())
+                    val port = connJson.getInt("port")
+                    val token = connJson.getString("token")
+                    if (port > 0 && token.isNotEmpty()) {
+                        val url = URL("http://127.0.0.1:$port/rpc")
+                        val conn = (url.openConnection() as HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            setRequestProperty("Content-Type", "application/json")
+                            setRequestProperty("Authorization", "Bearer $token")
+                            doOutput = true
+                            connectTimeout = 1000
+                            readTimeout = 2000
+                        }
+                        val rpcRequest = JSONObject().apply {
+                            put("id", 1)
+                            put("method", "health")
+                            put("params", JSONObject())
+                        }
+                        conn.outputStream.use { os ->
+                            os.write(rpcRequest.toString().toByteArray(Charsets.UTF_8))
+                        }
+                        responseCode = conn.responseCode
+                        responseText = conn.inputStream.bufferedReader().use { it.readText() }
+                        break
+                    }
+                } catch (e: Throwable) {
+                    lastError = e
+                }
+            }
+            Thread.sleep(150)
         }
 
         assertTrue("connection.json must be created by native service", connFile.exists())
-        val connJson = JSONObject(connFile.readText())
-        val port = connJson.getInt("port")
-        val token = connJson.getString("token")
-        assertTrue("Port should be positive", port > 0)
-        assertNotNull("Token must not be empty", token)
-
-        // 通过本地 Loopback 验证 HTTP RPC 服务可用
-        val url = URL("http://127.0.0.1:$port/rpc")
-        val conn = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer $token")
-            doOutput = true
-            connectTimeout = 3000
-            readTimeout = 3000
+        if (responseCode != 200) {
+            throw AssertionError("RPC health check failed (code=$responseCode)", lastError)
         }
-
-        val rpcRequest = JSONObject().apply {
-            put("id", 1)
-            put("method", "health")
-            put("params", JSONObject())
-        }
-
-        conn.outputStream.use { os ->
-            os.write(rpcRequest.toString().toByteArray(Charsets.UTF_8))
-        }
-
-        assertEquals(200, conn.responseCode)
-        val responseText = conn.inputStream.bufferedReader().use { it.readText() }
         val rpcResponse = JSONObject(responseText)
         assertTrue("RPC response should contain result", rpcResponse.has("result"))
     }
