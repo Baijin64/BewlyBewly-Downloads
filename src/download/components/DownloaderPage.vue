@@ -22,6 +22,7 @@ const input = ref('')
 const allParts = ref(false)
 const error = ref('')
 const refreshKey = ref(0)
+const probeOnMount = ref(false)
 const { handlePageRefresh, handleReachBottom } = useBewlyApp()
 async function loadSettings() {
   try {
@@ -42,6 +43,7 @@ function selectLinks() {
 }
 
 async function refreshCurrentTasks() {
+  probeOnMount.value = true
   refreshKey.value++
   await loadSettings()
 }
@@ -113,7 +115,7 @@ onBeforeUnmount(() => {
           {{ error }}
         </p>
       </details>
-      <DownloadsPanel :key="refreshKey" />
+      <DownloadsPanel :key="refreshKey" :probe-on-mount="probeOnMount" />
     </template>
     <DownloadSettings v-else-if="view === 'settings'" />
     <DownloadTools v-else />

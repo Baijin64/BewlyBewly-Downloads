@@ -38,7 +38,7 @@ function ensurePort() {
         void rememberReply('uiSnapshot', { ok: true, result: reply.snapshot })
       if (active) {
         clearTimeout(active.timeout)
-        active.resolve({ ok: false, code: 'SERVICE_OFFLINE', error: '下载助手已空闲退出' })
+        active.resolve({ ok: false, code: 'SERVICE_OFFLINE', error: '下载助手已空闲退出', ...(reply.snapshot ? { snapshot: reply.snapshot } : {}) } as DownloadReply<unknown>)
         active = undefined
       }
       disconnect()

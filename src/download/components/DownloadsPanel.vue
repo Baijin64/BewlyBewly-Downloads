@@ -19,6 +19,8 @@ import DownloadProgress from './DownloadProgress.vue'
 import DownloadTaskHeader from './DownloadTaskHeader.vue'
 import SelectionButton from './SelectionButton.vue'
 
+const props = defineProps<{ probeOnMount?: boolean }>()
+
 const data = shallowRef<TaskQuery>({
   items: [],
   total: 0,
@@ -47,6 +49,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let generation = 0
+let initializedTab = false
 
 function schedulePoll() {
   clearTimeout(timer)
@@ -68,6 +71,8 @@ async function refresh(probe = false) {
     return
   loading.value = true
   const current = generation
+  const prevCounts = data.value.counts
+  const hadActive = prevCounts.active > 0 || data.value.items.some(item => ['queued', 'resolving', 'downloading', 'muxing', 'postprocessing'].includes(item.status))
   try {
     const result = await downloadRequest<TaskQuery>('queryTasks', {
       tab: tab.value,
@@ -80,6 +85,18 @@ async function refresh(probe = false) {
       data.value = result
       downloadTaskCount.value = result.counts.pending + result.counts.active
       error.value = result.storageError || ''
+      if (!initializedTab) {
+        initializedTab = true
+        if (tab.value === 'pending' && result.counts.pending === 0 && result.counts.active > 0) {
+          tab.value = 'active'
+          return
+        }
+      }
+      else if (tab.value === 'active' && hadActive && result.counts.active === 0 && result.counts.completed > prevCounts.completed && !search.value) {
+        message.value = '下载已完成。'
+        tab.value = 'completed'
+        return
+      }
       if (!result.items.length && page.value > 1)
         page.value--
     }
@@ -214,13 +231,14 @@ function editSelection() {
 }
 onMounted(async () => {
   try {
-    const health = await downloadRequest<HelperStatus>('health', { connect: new URL(location.href).searchParams.get('downloadConnect') === '1' })
+    const probe = Boolean(props.probeOnMount) || new URL(location.href).searchParams.get('downloadConnect') === '1'
+    const health = await downloadRequest<HelperStatus>('health', { connect: probe })
     if ((health.protocol || 1) < 2) {
       throw new Error(
         '请更新至 0.2.0 或更高版本的下载助手，以使用持久队列和批量管理。',
       )
     }
-    await refresh()
+    await refresh(probe)
   }
   catch (err) {
     error.value = String((err as Error).message)

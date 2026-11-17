@@ -68,10 +68,13 @@ async function save() {
   error.value = ''
   message.value = ''
   try {
-    form.value = await downloadRequest<HelperSettings>('configure', {
+    const saved = await downloadRequest<HelperSettings>('configure', {
       ...form.value,
       defaultOptions: { ...options.value },
     })
+    form.value = saved
+    if (helper.value)
+      helper.value.settings = JSON.parse(JSON.stringify(saved))
     downloadPreferences.value = normalizeDownloadOptions(options.value)
     message.value
       = '已保存。默认选项和目录只影响新任务，已加入的任务保留原配置。'
@@ -84,9 +87,27 @@ async function save() {
     busy.value = false
   }
 }
+async function saveDirectory(directory = form.value?.directory?.trim()) {
+  if (!directory || !form.value || directory === helper.value?.settings.directory)
+    return
+  error.value = ''
+  message.value = ''
+  try {
+    const saved = await downloadRequest<HelperSettings>('configure', { directory })
+    form.value.directory = saved.directory
+    if (helper.value)
+      helper.value.settings = { ...helper.value.settings, directory: saved.directory }
+    message.value = '保存目录已更新，新加入的任务会保存到这里。'
+    window.dispatchEvent(new Event('bewly-download-settings-changed'))
+  }
+  catch (err) {
+    error.value = String((err as Error).message)
+  }
+}
 async function pickDirectory() {
   busy.value = true
   error.value = ''
+  message.value = ''
   controller?.abort()
   controller = new AbortController()
   try {
@@ -95,7 +116,7 @@ async function pickDirectory() {
       form.value?.directory,
       controller.signal,
     )
-    if (path && form.value && path !== form.value.directory) {
+    if (path && form.value) {
       // A picked folder takes effect right away. Only the directory is sent, so
       // other edits on this page still wait for the save button.
       const saved = await downloadRequest<HelperSettings>('configure', { directory: path })
@@ -198,6 +219,8 @@ defineExpose({ chooseDefaultDir, pickDirectory })
                 v-model="form.directory"
                 class="path"
                 aria-label="保存目录"
+                @change="saveDirectory()"
+                @keydown.enter.prevent="saveDirectory()"
                 @keydown.stop
               >
               <Button :disabled="busy" @click="pickDirectory">

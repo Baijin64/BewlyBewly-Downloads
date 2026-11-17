@@ -7,18 +7,19 @@ import { biliApi, inspectDownload, inspectFormats, inspectQualities, inspectSubt
 import { requestNativeDownload, requestNativeDownloadDetached } from './nativeDownloadClient'
 
 const methods = new Set<DownloadMethod>(['authorizeStart', 'health', 'inspect', 'inspectSubtitles', 'inspectQualities', 'inspectFormats', 'createTasks', 'stageTasks', 'listTasks', 'queryTasks', 'taskAction', 'batchAction', 'configure', 'previewPath', 'taskFile', 'tool', 'migrationPreview', 'migrationImport'])
-const idempotentMethods = new Set<string>(['health', 'capabilities', 'queryTasks', 'getTask', 'getSettings', 'listTools', 'listTasks', 'inspect', 'inspectSubtitles', 'inspectQualities', 'inspectFormats', 'previewPath', 'migrationPreview'])
+const idempotentMethods = new Set<string>(['health', 'capabilities', 'queryTasks', 'getTask', 'getSettings', 'listTools', 'listTasks', 'inspect', 'inspectSubtitles', 'inspectQualities', 'inspectFormats', 'previewPath', 'migrationPreview', 'configure'])
 const cookieNames = new Set(['SESSDATA', 'bili_jct', 'DedeUserID', 'DedeUserID__ckMd5', 'buvid3', 'buvid4'])
 const consentKey = 'bewly-native-autostart'
 let initializing: Promise<void> | undefined
+let lastInteractiveAt = 0
 function initializeCache() {
   initializing ||= (async () => {
     const state = await downloadSnapshot()
-    if (state.initialized && !state.counts.active)
+    if (state.initialized && !state.counts.active && !await cachedWorkInProgress())
       return
     try {
       await rememberReply('uiSnapshot', await requestNativeDownload({ method: 'uiSnapshot' }))
-      if ((await downloadSnapshot()).counts.active) {
+      if ((await downloadSnapshot()).counts.active || await cachedWorkInProgress()) {
         // After a worker restart, attach to an existing download without waking one.
         await rememberReply('health', await requestNativeDownload({ method: 'health', allowStart: false }))
       }
@@ -60,11 +61,28 @@ async function nativeRequest(method: DownloadMethod | 'expandLink', params: Reco
   }
   const message = { method, params, allowStart, ...(session === undefined ? {} : { session }) }
   let reply = await requestNativeDownload(message)
-  if (!reply.ok && reply.code === 'SERVICE_OFFLINE' && allowStart && idempotentMethods.has(method))
+  if (!reply.ok && ['SERVICE_OFFLINE', 'SERVICE_STOPPING'].includes(reply.code || '') && allowStart && idempotentMethods.has(method))
     reply = await requestNativeDownload(message)
+  const prevState = await downloadSnapshot()
+  const prevCounts = { ...prevState.counts }
+  const hadWork = await cachedWorkInProgress()
   await rememberReply(method, reply, params)
   if (!reply.ok && ['SERVICE_OFFLINE', 'SERVICE_STOPPING'].includes(reply.code || ''))
     return startRequired()
+  if (reply.ok && method === 'queryTasks' && params.tab && params.tab !== 'all') {
+    const nextCounts = (reply.result as any)?.counts || prevCounts
+    const countsChanged = prevCounts.active !== nextCounts.active || prevCounts.completed !== nextCounts.completed || prevCounts.failed !== nextCounts.failed
+    if (countsChanged || hadWork !== await cachedWorkInProgress()) {
+      try {
+        const allParams = { tab: 'all', pageSize: 100 }
+        const allReply = await requestNativeDownload({ method: 'queryTasks', params: allParams, allowStart: false })
+        await rememberReply('queryTasks', allReply, allParams)
+        if (!allReply.ok && !(allReply as any).snapshot)
+          await rememberReply('uiSnapshot', await requestNativeDownload({ method: 'uiSnapshot' }))
+      }
+      catch { markHelperOffline() }
+    }
+  }
   if (reply.ok && !['health', 'queryTasks', 'listTasks'].includes(method) && !(method === 'tool' && params.op === 'status')) {
     // Capture the authoritative settings and latest records before an idle exit.
     for (const [nextMethod, nextParams] of [['health', {}], ['queryTasks', { tab: 'all', pageSize: 100 }]] as const) {
@@ -102,7 +120,10 @@ async function handle(message: { method: DownloadMethod, params: Record<string, 
     if (message.method === 'previewPath')
       return { ok: true, result: await cachedPreview(params) }
     if (['health', 'queryTasks', 'listTasks'].includes(message.method)) {
+      const hadWork = await cachedWorkInProgress()
       if (helperConnected() || params.connect === true || await shouldProbeHelper()) {
+        if (params.connect === true)
+          recordProbe(true)
         try {
           const reply = await nativeRequest(message.method, params, false)
           recordProbe(reply.ok)
@@ -113,7 +134,7 @@ async function handle(message: { method: DownloadMethod, params: Record<string, 
           markHelperOffline()
           recordProbe(false)
         }
-        if (params.connect === true) {
+        if (params.connect === true || (hadWork && await cachedWorkInProgress())) {
           try {
             await rememberReply('uiSnapshot', await requestNativeDownload({ method: 'uiSnapshot' }))
           }
@@ -159,11 +180,14 @@ async function handle(message: { method: DownloadMethod, params: Record<string, 
     }
     const allowedValue = (await browser.storage.local.get(consentKey))[consentKey]
     const allowStart = allowedValue === 'true' || allowedValue === true
-    if (!helperConnected() && !allowStart)
+    if (!helperConnected() && !allowStart && Date.now() - lastInteractiveAt > 5000)
       return startRequired()
     if (message.method === 'tool' && params.op === 'pick') {
       // The picker stays open until the user chooses, so it cannot share the 15-second queue.
       const reply = await requestNativeDownloadDetached({ method: 'tool', params, allowStart }, 10 * 60_000)
+      await rememberReply('tool', reply, params)
+      if (reply.ok)
+        lastInteractiveAt = Date.now()
       return !reply.ok && ['SERVICE_OFFLINE', 'SERVICE_STOPPING'].includes(reply.code || '') ? startRequired() : reply
     }
     if (message.method === 'createTasks' || message.method === 'stageTasks') {

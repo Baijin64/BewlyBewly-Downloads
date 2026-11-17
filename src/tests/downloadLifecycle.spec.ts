@@ -1,12 +1,12 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 
-const mock = vi.hoisted(() => ({ native: vi.fn(), listener: vi.fn(), get: vi.fn(), set: vi.fn(), cookies: vi.fn(), inspect: vi.fn(), values: {} as Record<string, any> }))
+const mock = vi.hoisted(() => ({ native: vi.fn(), detached: vi.fn(), listener: vi.fn(), get: vi.fn(), set: vi.fn(), cookies: vi.fn(), inspect: vi.fn(), values: {} as Record<string, any> }))
 vi.mock('webextension-polyfill', () => ({ default: {
   runtime: { id: 'fixture-extension', onMessage: { addListener: mock.listener } },
   storage: { local: { get: mock.get, set: mock.set } },
   cookies: { getAll: mock.cookies },
 } }))
-vi.mock('~/background/nativeDownloadClient', () => ({ requestNativeDownload: mock.native }))
+vi.mock('~/background/nativeDownloadClient', () => ({ requestNativeDownload: mock.native, requestNativeDownloadDetached: mock.detached }))
 vi.mock('~/background/downloadResolver', () => ({ inspectDownload: mock.inspect, inspectFormats: vi.fn(async () => ({ video: [], audio: [] })), inspectQualities: vi.fn(), inspectSubtitles: vi.fn(), resolveDownload: vi.fn(), biliApi: vi.fn() }))
 let handler: (message: any, sender: any) => Promise<any>
 const sender = { id: 'fixture-extension', url: 'https://www.bilibili.com/video/BV17x411w7KC' }
@@ -19,6 +19,7 @@ beforeEach(async () => {
   mock.values = {}
   mock.listener.mockClear()
   mock.native.mockReset()
+  mock.detached.mockReset()
   mock.get.mockImplementation(async key => ({ [key]: mock.values[key] }))
   mock.set.mockImplementation(async data => Object.assign(mock.values, structuredClone(data)))
   mock.cookies.mockResolvedValue([])
@@ -130,4 +131,87 @@ it('removed records do not reappear after an aggregate batch and an idle exit', 
   expect((await cache.cachedTasks({})).items.map(task => task.id)).toEqual(['finished'])
   await cache.rememberReply('queryTasks', { ok: true, result: { items: [], total: 0, counts: { pending: 0, active: 0, completed: 0, failed: 0 } } }, { tab: 'all' })
   expect((await cache.cachedTasks({})).items).toEqual([])
+})
+
+it('does not leave a 94% downloading task stuck in active after completion and on-demand idle exit', async () => {
+  const downloadingTask = { ...pending, status: 'downloading', progress: 94, speed: 1048576 }
+  const completedTask = { ...pending, status: 'completed', progress: 100, speed: 0, output: 'C:\\Videos\\Fixture.mp4' }
+  let finished = false
+  mock.native.mockImplementation(async (message) => {
+    if (!finished) {
+      const runtime = { running: true, mode: 'on-demand', state: 'busy' }
+      return { ok: true, result: { items: [downloadingTask], total: 1, page: 1, pageSize: 50, counts: { pending: 0, active: 1, completed: 0, failed: 0 } }, runtime }
+    }
+    const runtime = { running: true, mode: 'on-demand', state: 'idle', exitAt: Date.now() + 5000 }
+    if (message.method === 'queryTasks' && message.params?.tab === 'active')
+      return { ok: true, result: { items: [], total: 0, page: 1, pageSize: 50, counts: { pending: 0, active: 0, completed: 1, failed: 0 } }, runtime }
+    if (message.method === 'queryTasks' && message.params?.tab === 'all')
+      return { ok: true, result: { items: [completedTask], total: 1, page: 1, pageSize: 100, counts: { pending: 0, active: 0, completed: 1, failed: 0 } }, runtime }
+    return { ok: false, code: 'SERVICE_OFFLINE', error: 'offline' }
+  })
+  const firstPoll = await send('queryTasks', { tab: 'active', page: 1, pageSize: 50, connect: true })
+  expect(firstPoll.result.items[0].progress).toBe(94)
+
+  finished = true
+  const secondPoll = await send('queryTasks', { tab: 'active', page: 1, pageSize: 50 })
+  expect(secondPoll.result.items).toEqual([])
+  expect(secondPoll.result.counts.completed).toBe(1)
+
+  // Subsequent offline polls must not resurrect the 94% task from snapshot.tasks
+  const offlineActive = await send('queryTasks', { tab: 'active', page: 1, pageSize: 50 })
+  expect(offlineActive.result.items).toEqual([])
+  const offlineCompleted = await send('queryTasks', { tab: 'completed', page: 1, pageSize: 50 })
+  expect(offlineCompleted.result.items[0]).toMatchObject({ id: 'fixture', status: 'completed', progress: 100, output: 'C:\\Videos\\Fixture.mp4' })
+})
+
+it('updates a cached downloading task from uiSnapshot when the helper has already exited', async () => {
+  vi.resetModules()
+  const downloadingTask = { ...pending, status: 'downloading', progress: 94 }
+  const completedTask = { ...pending, status: 'completed', progress: 100, output: 'C:\\Videos\\Fixture.mp4' }
+  // Simulate corrupted cache where counts.active became 0 while tasks still had 94% downloading
+  mock.values = { 'bewly-download-snapshot': { initialized: true, tasks: [downloadingTask], counts: { pending: 0, active: 0, completed: 0, failed: 0 } } }
+  mock.native.mockImplementation(async (message) => {
+    if (message.method === 'uiSnapshot')
+      return { ok: true, result: { ...snapshot, items: [completedTask], counts: { pending: 0, active: 0, completed: 1, failed: 0 } } }
+    return { ok: false, code: 'SERVICE_OFFLINE', error: 'offline' }
+  })
+  const { setupDownloadMessages } = await import('~/background/download')
+  setupDownloadMessages()
+  handler = mock.listener.mock.calls.at(-1)![0]
+  const active = await send('queryTasks', { tab: 'active' })
+  expect(active.result.items).toEqual([])
+  const completed = await send('queryTasks', { tab: 'completed' })
+  expect(completed.result.items[0]).toMatchObject({ id: 'fixture', status: 'completed', progress: 100 })
+})
+
+it('persists a newly picked download directory immediately via configure', async () => {
+  const newDir = 'C:\\Users\\Yidong Derek Li\\Videos\\Bilibili下载'
+  const updatedSettings = { ...health.settings, directory: newDir }
+  mock.detached.mockResolvedValue({
+    ok: true,
+    result: { id: 'pick-1', status: 'completed', result: { path: newDir, cancelled: false } },
+    runtime: { running: true, mode: 'on-demand', state: 'idle', exitAt: Date.now() + 5000 },
+  })
+  mock.native.mockImplementation(async (message) => {
+    if (message.method === 'bootstrapStatus')
+      return { ok: true, result: { connectorVersion: '0.2.8', runtime: { ready: true } } }
+    const runtime = { running: true, mode: 'on-demand', state: 'idle', exitAt: Date.now() + 5000 }
+    if (message.method === 'configure')
+      return { ok: true, result: updatedSettings, runtime }
+    if (message.method === 'health')
+      return { ok: true, result: { ...health, settings: updatedSettings }, runtime }
+    if (message.method === 'queryTasks')
+      return { ok: true, result: { items: [pending], total: 1, page: 1, pageSize: 100, counts: snapshot.counts }, runtime }
+    return { ok: false, code: 'SERVICE_OFFLINE', error: 'offline' }
+  })
+  await send('authorizeStart')
+  const picked = await send('tool', { op: 'pick', kind: 'directory', path: health.settings.directory })
+  expect(picked.ok).toBe(true)
+  const configured = await send('configure', { directory: newDir })
+  expect(configured.ok).toBe(true)
+  expect(configured.result.directory).toBe(newDir)
+  const status = await send('health')
+  expect(status.result.settings.directory).toBe(newDir)
+  const preview = await send('previewPath', { task: pending, options: pending.options })
+  expect(preview.result).toEqual({ directory: newDir, basename: 'Fixture' })
 })

@@ -28,6 +28,13 @@ const mutatingMethods = new Set([
   'uiSnapshot',
 ])
 
+const tabStatuses: Record<string, string[]> = {
+  pending: ['pending'],
+  active: ['queued', 'resolving', 'downloading', 'paused', 'muxing', 'postprocessing'],
+  completed: ['completed'],
+  failed: ['failed', 'cancelled'],
+}
+
 let lastSavedFingerprint = ''
 let lastSavedState = ''
 let lastSaveTime = 0
@@ -95,19 +102,26 @@ export async function rememberReply(method: string, reply: DownloadReply<any>, p
       snapshot.health = { ...reply.result, runtime: reply.runtime }
     if (method === 'uiSnapshot') {
       snapshot.health = reply.result.health
-      snapshot.tasks = reply.result.items || []
+      snapshot.tasks = (reply.result.items || []).map((task: DownloadTask) => uiTask(task))
       snapshot.counts = reply.result.counts || snapshot.counts
       snapshot.syncedAt = reply.result.syncedAt
     }
-    if (method === 'configure' && snapshot.health)
-      snapshot.health.settings = reply.result
+    if (method === 'configure')
+      snapshot.health = { ...(snapshot.health || await cachedHealth()), settings: reply.result, runtime: reply.runtime || snapshot.health?.runtime }
     let tasks: DownloadTask[] = []
     if (method === 'queryTasks') {
-      tasks = reply.result.items
-      snapshot.counts = reply.result.counts
+      tasks = reply.result.items || []
+      snapshot.counts = reply.result.counts || snapshot.counts
       snapshot.syncedAt = new Date().toISOString()
-      if ((!params.tab || params.tab === 'all') && !params.search && (!params.page || params.page === 1) && reply.result.total <= tasks.length)
-        snapshot.tasks = []
+      if (!params.search && (!params.page || params.page === 1) && (reply.result.total ?? tasks.length) <= tasks.length) {
+        if (!params.tab || params.tab === 'all') {
+          snapshot.tasks = []
+        }
+        else if (tabStatuses[String(params.tab)]) {
+          const currentIds = new Set(tasks.map(task => task.id))
+          snapshot.tasks = snapshot.tasks.filter(task => !tabStatuses[String(params.tab)].includes(task.status) || currentIds.has(task.id))
+        }
+      }
     }
     else if (['createTasks', 'stageTasks', 'listTasks'].includes(method)) {
       tasks = reply.result
@@ -120,9 +134,8 @@ export async function rememberReply(method: string, reply: DownloadReply<any>, p
     }
     const known = new Map(snapshot.tasks.map(task => [task.id, task]))
     if (method === 'batchAction' && params.action === 'remove' && params.all && !reply.result.errorCount && !reply.result.errors?.length) {
-      const groups: Record<string, string[]> = { pending: ['pending'], active: ['queued', 'resolving', 'downloading', 'paused'], completed: ['completed'], failed: ['failed', 'cancelled'] }
       for (const [id, task] of known) {
-        if (groups[String(params.all)]?.includes(task.status))
+        if (tabStatuses[String(params.all)]?.includes(task.status))
           known.delete(id)
       }
     }
@@ -133,6 +146,13 @@ export async function rememberReply(method: string, reply: DownloadReply<any>, p
   }
   else if (['SERVICE_OFFLINE', 'SERVICE_STOPPING'].includes(reply.code || '')) {
     connected = false
+    const snap = (reply as any).snapshot
+    if (snap && typeof snap === 'object') {
+      snapshot.health = snap.health || snapshot.health
+      snapshot.tasks = (snap.items || []).map((task: DownloadTask) => uiTask(task))
+      snapshot.counts = snap.counts || snapshot.counts
+      snapshot.syncedAt = snap.syncedAt || snapshot.syncedAt
+    }
   }
   snapshot.initialized = true
   const isMutating = mutatingMethods.has(method)
@@ -173,9 +193,8 @@ export async function cachedHealth(): Promise<HelperStatus> {
 }
 export async function cachedTasks(params: Record<string, unknown>): Promise<TaskQuery> {
   const state = await downloadSnapshot()
-  const statuses: Record<string, string[]> = { pending: ['pending'], active: ['queued', 'resolving', 'downloading', 'paused', 'muxing', 'postprocessing'], completed: ['completed'], failed: ['failed', 'cancelled'] }
   const search = String(params.search || '').toLowerCase()
-  const rows = state.tasks.filter(task => (!statuses[String(params.tab)] || statuses[String(params.tab)].includes(task.status)) && (!search || [task.title, task.part, task.bvid].some(value => value?.toLowerCase().includes(search))))
+  const rows = state.tasks.filter(task => (!tabStatuses[String(params.tab)] || tabStatuses[String(params.tab)].includes(task.status)) && (!search || [task.title, task.part, task.bvid].some(value => value?.toLowerCase().includes(search))))
   const page = Math.max(1, Number(params.page) || 1)
   const pageSize = Math.max(1, Math.min(100, Number(params.pageSize) || 50))
   return { items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts: state.counts, offline: true, syncedAt: state.syncedAt }
