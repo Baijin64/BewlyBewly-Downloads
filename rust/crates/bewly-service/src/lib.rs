@@ -11,4 +11,4 @@ pub mod tools;
 pub mod wbi;
 pub mod worker;
 
-pub use server::run;
+pub use server::{run, run_with_shutdown};

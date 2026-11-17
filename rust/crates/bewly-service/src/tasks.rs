@@ -242,6 +242,18 @@ fn normalize_and_validate_url(url_str: &str) -> Result<String, String> {
 
 /// Minimal `validatePrepared` port: keep the resolved stream URLs so the engine
 /// can download without another playurl round trip.
+/// Reads a stream id or quality as an integer. Tasks saved before ids were
+/// kept as integers hold them as floats (30251.0), which `as_u64` rejects.
+pub fn whole_number(value: Option<&Value>) -> Option<u64> {
+    let value = value?;
+    value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|number| number.fract() == 0.0 && *number >= 0.0 && *number <= u32::MAX as f64)
+            .map(|number| number as u64)
+    })
+}
+
 pub fn validate_prepared(value: &Value) -> Result<Value, String> {
     if !value.is_object() {
         return Err("缺少视频解析结果".into());
@@ -263,11 +275,13 @@ pub fn validate_prepared(value: &Value) -> Result<Value, String> {
             let clean_url = normalize_and_validate_url(text)?;
             clean.push(Value::String(clean_url));
         }
+        // Ids stay integers: the worker reads them with as_u64 and compares them
+        // with ids resolved in Rust, and a float 30251.0 matches neither.
         Ok(json!({
             "urls": clean,
-            "quality": input.get("quality").and_then(Value::as_f64).unwrap_or(0.0),
-            "id": input.get("id").and_then(Value::as_f64).unwrap_or(0.0),
-            "codec": input.get("codec").and_then(Value::as_f64).unwrap_or(0.0),
+            "quality": whole_number(input.get("quality")).unwrap_or(0),
+            "id": whole_number(input.get("id")).unwrap_or(0),
+            "codec": whole_number(input.get("codec")).unwrap_or(0),
             "codecs": input.get("codecs").and_then(Value::as_str).unwrap_or(""),
             "bandwidth": input.get("bandwidth").and_then(Value::as_f64).unwrap_or(0.0),
         }))
@@ -728,6 +742,21 @@ mod tests {
         assert_eq!(counts.failed, 1);
         let result = query(&tasks, &json!({ "tab": "failed" })).unwrap();
         assert_eq!(result.total, 1);
+    }
+
+    #[test]
+    fn validate_prepared_keeps_stream_ids_whole() {
+        let res = validate_prepared(&json!({
+            "video": { "urls": ["https://xy.bilivideo.com/v.m4s"], "quality": 80, "codec": 12 },
+            "audio": { "urls": ["https://xy.bilivideo.com/a.m4s"], "id": 30251, "codecs": "fLaC" },
+        }))
+        .unwrap();
+        assert_eq!(res["audio"]["id"].as_u64(), Some(30251));
+        assert_eq!(res["video"]["quality"].as_u64(), Some(80));
+        assert_eq!(res["video"]["codec"].as_u64(), Some(12));
+        // Payloads stored by earlier builds hold floats; they still read back.
+        assert_eq!(whole_number(Some(&json!(30251.0))), Some(30251));
+        assert_eq!(whole_number(Some(&json!(80.5))), None);
     }
 
     #[test]

@@ -154,7 +154,16 @@ fn open_system_target(action: &str, target: &Path) -> Result<(), String> {
         cmd.spawn()
             .map_err(|error| format!("无法打开目标: {error}"))?;
     }
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    {
+        let _ = (action, target);
+        return Err("Android 端请在应用内打开文件".into());
+    }
+    #[cfg(all(
+        not(target_os = "windows"),
+        not(target_os = "macos"),
+        not(target_os = "android")
+    ))]
     {
         let target_to_open = if action == "reveal" {
             target.parent().unwrap_or(target)
@@ -166,7 +175,10 @@ fn open_system_target(action: &str, target: &Path) -> Result<(), String> {
         cmd.spawn()
             .map_err(|error| format!("无法打开目标: {error}"))?;
     }
-    Ok(())
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(())
+    }
 }
 
 fn trigger_system_shutdown() {
@@ -946,30 +958,45 @@ fn task_action(state: &ServiceState, params: &Value) -> Result<Value, String> {
             Ok(result)
         }
         "pause" | "cancel" => {
-            if matches!(status.as_str(), "completed" | "cancelled") {
-                return Ok(tasks::public_task(&task));
-            }
-            if matches!(status.as_str(), "muxing" | "postprocessing") {
-                return Err("正在合并或保存附件，请等待当前步骤结束".into());
-            }
-            if let Some(flag) = state
-                .running
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .get(id)
-            {
-                flag.store(true, Ordering::Relaxed);
-            }
-            task["speed"] = json!(0);
-            set_status(
-                state,
-                &mut task,
-                if action == "pause" {
-                    "paused"
-                } else {
-                    "cancelled"
-                },
-            )
+            let public = {
+                // The run's stop flag and the new status change together under
+                // the store lock. The worker checks the flag under the same lock
+                // before every write, so a run that is still draining can never
+                // write its stale copy over the pause (or over a later resume).
+                let store = state.store();
+                let mut task = store
+                    .task(id)
+                    .map_err(|error| error.to_string())?
+                    .ok_or("任务不存在")?;
+                let status = status_of(&task).to_string();
+                if matches!(status.as_str(), "completed" | "cancelled") {
+                    return Ok(tasks::public_task(&task));
+                }
+                if matches!(status.as_str(), "muxing" | "postprocessing") {
+                    return Err("正在合并或保存附件，请等待当前步骤结束".into());
+                }
+                if let Some(flag) = state
+                    .running
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get(id)
+                {
+                    flag.store(true, Ordering::Relaxed);
+                }
+                task["speed"] = json!(0);
+                task["status"] = Value::String(
+                    if action == "pause" {
+                        "paused"
+                    } else {
+                        "cancelled"
+                    }
+                    .to_string(),
+                );
+                store.put_task(&task).map_err(|error| error.to_string())?;
+                tasks::public_task(&task)
+            };
+            state.save_snapshot();
+            Ok(public)
         }
         "resume" | "retry" => {
             if !matches!(status.as_str(), "paused" | "failed" | "cancelled") {
@@ -1270,14 +1297,25 @@ async fn fallback() -> Response {
 }
 
 pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    run_with_shutdown(data_directory, mode, rx).await
+}
+
+pub async fn run_with_shutdown(
+    data_directory: PathBuf,
+    mode: String,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), String> {
     acquire_service_lock(&data_directory)?;
     let state = Arc::new(ServiceState::open(&data_directory, &mode)?);
     let token = state.token.clone();
     state.save_snapshot();
     ensure_tray(&state);
     crate::worker::spawn(state.clone());
+    #[allow(unused_variables)]
+    let (internal_tx, mut internal_rx) = tokio::sync::watch::channel(false);
     let housekeeping = state.clone();
-    tokio::spawn(async move {
+    let housekeeping_handle = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             ticker.tick().await;
@@ -1312,7 +1350,13 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
                     let _ = std::fs::remove_file(housekeeping.data_directory.join("service.lock"));
                     // Give the in-flight reply a moment to leave the socket.
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    #[cfg(not(target_os = "android"))]
                     std::process::exit(0);
+                    #[cfg(target_os = "android")]
+                    {
+                        let _ = internal_tx.send(true);
+                        break;
+                    }
                 }
             }
         }
@@ -1355,9 +1399,19 @@ pub async fn run(data_directory: PathBuf, mode: String) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&descriptor, std::fs::Permissions::from_mode(0o600));
     }
+    let closing_state = state.clone();
     axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = shutdown_rx.wait_for(|v| *v) => {},
+                _ = internal_rx.changed() => {},
+            }
+            closing_state.closing.store(true, Ordering::Relaxed);
+            closing_state.save_snapshot();
+        })
         .await
         .map_err(|error| error.to_string())?;
+    housekeeping_handle.abort();
     Ok(())
 }
 

@@ -69,17 +69,19 @@ pub fn spawn(state: Arc<ServiceState>) {
             if running >= settings.max_concurrent as usize {
                 continue;
             }
-            // Without a session cookie playurl cannot be signed, so unresolved
-            // tasks wait instead of failing or quietly falling back to a low quality.
-            let has_cookie = !state
-                .cookie
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .trim()
-                .is_empty();
+            // On desktop, unresolved tasks wait for a logged-in session cookie so
+            // quality does not silently drop; on Android there is no browser
+            // extension to pre-prepare streams, so allow guest buvid fallback.
+            let allow_unresolved = cfg!(target_os = "android")
+                || !state
+                    .cookie
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .trim()
+                    .is_empty();
             let candidate = state
                 .store()
-                .next_runnable_queued_task(has_cookie)
+                .next_runnable_queued_task(allow_unresolved)
                 .unwrap_or(None)
                 .and_then(|task| task.get("id").and_then(Value::as_str).map(str::to_string));
             let Some(id) = candidate else {
@@ -124,13 +126,60 @@ fn fail_unfinished(state: &ServiceState, id: &str, error: &str) {
     }
 }
 
-fn update(state: &ServiceState, task: &mut Value, changes: Value) {
+/// True once pause or cancel has been requested for the run that currently
+/// owns `id`.
+fn run_cancelled(state: &ServiceState, id: &str) -> bool {
+    state
+        .running
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(id)
+        .is_some_and(|flag| flag.load(Ordering::Relaxed))
+}
+
+fn apply_changes(task: &mut Value, changes: Value) {
     if let (Some(target), Some(source)) = (task.as_object_mut(), changes.as_object()) {
         for (key, value) in source {
             target.insert(key.clone(), value.clone());
         }
     }
-    let _ = state.store().put_task(task);
+}
+
+fn update(state: &ServiceState, task: &mut Value, changes: Value) {
+    apply_changes(task, changes);
+    let id = task
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    // `task_action` raises the run's flag and rewrites the status under this
+    // same store lock. A run that was told to stop no longer owns the record:
+    // its copy is stale, and writing it would undo the pause or cancel, or a
+    // resume that arrived while the run was still draining.
+    let store = state.store();
+    if run_cancelled(state, &id) {
+        return;
+    }
+    let _ = store.put_task(task);
+}
+
+/// Moves the run into muxing or attachment saving, which pause and cancel
+/// refuse to interrupt. The flag check and the write share the store lock with
+/// `task_action`, so a pause is either seen here or told to wait; it is never
+/// accepted and then lost.
+fn commit_stage(
+    state: &ServiceState,
+    task: &mut Value,
+    cancel: &AtomicBool,
+    changes: Value,
+) -> bool {
+    let store = state.store();
+    if cancel.load(Ordering::Relaxed) {
+        return false;
+    }
+    apply_changes(task, changes);
+    let _ = store.put_task(task);
+    true
 }
 
 fn fail(state: &ServiceState, task: &mut Value, message: &str) {
@@ -146,11 +195,9 @@ pub fn stream_from_prepared_video(video: &Value) -> Option<VideoStream> {
     if video.is_null() || !video.is_object() {
         return None;
     }
-    let quality = video.get("quality").and_then(Value::as_u64).unwrap_or(0) as u32;
-    let codec_num = video
-        .get("codecid")
-        .and_then(Value::as_u64)
-        .or_else(|| video.get("codec").and_then(Value::as_u64))
+    let quality = tasks::whole_number(video.get("quality")).unwrap_or(0) as u32;
+    let codec_num = tasks::whole_number(video.get("codecid"))
+        .or_else(|| tasks::whole_number(video.get("codec")))
         .or_else(|| {
             video
                 .get("codec")
@@ -198,7 +245,7 @@ pub fn stream_from_prepared_audio(audio: &Value) -> Option<AudioStream> {
     if audio.is_null() || !audio.is_object() {
         return None;
     }
-    let id = audio.get("id").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let id = tasks::whole_number(audio.get("id")).unwrap_or(0) as u32;
     let codecs = audio
         .get("codecs")
         .and_then(Value::as_str)
@@ -227,6 +274,12 @@ pub fn stream_from_prepared_audio(audio: &Value) -> Option<AudioStream> {
         bandwidth,
         urls,
     })
+}
+
+/// Compares a stream id or quality numerically: the extension's payload and a
+/// Rust re-resolve can encode the same id as 80.0 and 80.
+fn spec_changed(old: Option<&Value>, new: Option<&Value>) -> bool {
+    tasks::whole_number(old) != tasks::whole_number(new)
 }
 
 pub fn streams_from_prepared(prepared: &Value) -> Streams {
@@ -659,21 +712,19 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
     }
 
     let handle_cancel = |task: &mut Value| -> Result<(), String> {
-        let is_cancelled = state
-            .store()
-            .task(id)
-            .ok()
-            .flatten()
-            .and_then(|t| {
-                t.get("status")
-                    .and_then(Value::as_str)
-                    .map(|s| s == "cancelled")
-            })
-            .unwrap_or(false);
-        if is_cancelled {
-            update(state, task, json!({ "status": "cancelled", "speed": 0 }));
-        } else {
-            update(state, task, json!({ "status": "paused", "speed": 0 }));
+        // Pause and cancel already wrote the status they meant, and the user may
+        // have resumed since: `queued` means a new run is waiting for this one to
+        // leave `running`, so it must be left alone. Only a status that belongs
+        // to a live run is repaired.
+        let latest = state.store().task(id).ok().flatten();
+        if let Some(mut latest) = latest {
+            let status = latest.get("status").and_then(Value::as_str).unwrap_or("");
+            if matches!(status, "resolving" | "downloading") {
+                latest["status"] = Value::String("paused".into());
+                latest["speed"] = json!(0);
+                let _ = state.store().put_task(&latest);
+            }
+            *task = latest;
         }
         state.save_snapshot();
         Ok(())
@@ -741,8 +792,7 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
             &cookie,
         ) {
             Ok(value) => {
-                task["prepared"] = value.clone();
-                let _ = state.store().put_task(&task);
+                update(state, &mut task, json!({ "prepared": value.clone() }));
                 prepared = value;
             }
             Err(error) => {
@@ -765,13 +815,13 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
     let curr_audio_id = prepared.get("audio").and_then(|a| a.get("id"));
 
     let has_quality_mismatch = prev_quality
-        .map(|v| !v.is_null() && Some(v) != curr_quality)
+        .map(|v| !v.is_null() && spec_changed(Some(v), curr_quality))
         .unwrap_or(false);
     let has_codec_mismatch = prev_codec
-        .map(|v| !v.is_null() && Some(v) != curr_codec)
+        .map(|v| !v.is_null() && spec_changed(Some(v), curr_codec))
         .unwrap_or(false);
     let has_audio_mismatch = prev_audio_id
-        .map(|v| !v.is_null() && Some(v) != curr_audio_id)
+        .map(|v| !v.is_null() && spec_changed(Some(v), curr_audio_id))
         .unwrap_or(false);
 
     if has_quality_mismatch || has_codec_mismatch || has_audio_mismatch {
@@ -847,12 +897,18 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
                         let c_new = new_prepared.get("video").and_then(|v| v.get("codec"));
                         let a_old = prepared.get("audio").and_then(|a| a.get("id"));
                         let a_new = new_prepared.get("audio").and_then(|a| a.get("id"));
-                        if q_old != q_new || c_old != c_new || a_old != a_new {
+                        if spec_changed(q_old, q_new)
+                            || spec_changed(c_old, c_new)
+                            || spec_changed(a_old, a_new)
+                        {
                             fail(state, &mut task, "媒体规格已变化，请重新添加任务");
                             return Ok(());
                         }
-                        task["prepared"] = new_prepared.clone();
-                        let _ = state.store().put_task(&task);
+                        update(
+                            state,
+                            &mut task,
+                            json!({ "prepared": new_prepared.clone() }),
+                        );
                         prepared = new_prepared;
                         let retry_res = download_parallel_streams(
                             state,
@@ -925,12 +981,18 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
                             let c_new = new_prepared.get("video").and_then(|v| v.get("codec"));
                             let a_old = prepared.get("audio").and_then(|a| a.get("id"));
                             let a_new = new_prepared.get("audio").and_then(|a| a.get("id"));
-                            if q_old != q_new || c_old != c_new || a_old != a_new {
+                            if spec_changed(q_old, q_new)
+                                || spec_changed(c_old, c_new)
+                                || spec_changed(a_old, a_new)
+                            {
                                 fail(state, &mut task, "媒体规格已变化，请重新添加任务");
                                 return Ok(());
                             }
-                            task["prepared"] = new_prepared.clone();
-                            let _ = state.store().put_task(&task);
+                            update(
+                                state,
+                                &mut task,
+                                json!({ "prepared": new_prepared.clone() }),
+                            );
                             prepared = new_prepared;
                             res = download_stream(
                                 state,
@@ -1012,12 +1074,18 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
                             let c_new = new_prepared.get("video").and_then(|v| v.get("codec"));
                             let a_old = prepared.get("audio").and_then(|a| a.get("id"));
                             let a_new = new_prepared.get("audio").and_then(|a| a.get("id"));
-                            if q_old != q_new || c_old != c_new || a_old != a_new {
+                            if spec_changed(q_old, q_new)
+                                || spec_changed(c_old, c_new)
+                                || spec_changed(a_old, a_new)
+                            {
                                 fail(state, &mut task, "媒体规格已变化，请重新添加任务");
                                 return Ok(());
                             }
-                            task["prepared"] = new_prepared.clone();
-                            let _ = state.store().put_task(&task);
+                            update(
+                                state,
+                                &mut task,
+                                json!({ "prepared": new_prepared.clone() }),
+                            );
                             prepared = new_prepared;
                             res = download_stream(
                                 state,
@@ -1085,14 +1153,20 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
         }
     };
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let lossless = prepared["audio"].get("id").and_then(Value::as_u64) == Some(30251)
+    // "Auto" audio quality can pick the FLAC or Dolby track, so the container
+    // follows the stream actually downloaded: FFmpeg refuses FLAC in MP4.
+    let audio_id = tasks::whole_number(prepared["audio"].get("id"));
+    let audio_codecs = prepared["audio"]
+        .get("codecs")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let lossless = audio_id == Some(30251)
+        || audio_codecs.eq_ignore_ascii_case("flac")
         || options.audio_quality == "hires";
-    let dolby = prepared["audio"].get("id").and_then(Value::as_u64) == Some(30250)
+    let dolby = audio_id == Some(30250)
+        || audio_codecs.eq_ignore_ascii_case("ec-3")
         || options.audio_quality == "dolby";
-    let quality = prepared["video"]
-        .get("quality")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as u32;
+    let quality = tasks::whole_number(prepared["video"].get("quality")).unwrap_or(0) as u32;
 
     let mut artifacts = serde_json::Map::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -1108,11 +1182,14 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
     };
 
     if !media_kinds.is_empty() {
-        update(
+        if !commit_stage(
             state,
             &mut task,
+            &cancel,
             json!({ "status": "muxing", "progress": 100, "speed": 0 }),
-        );
+        ) {
+            return handle_cancel(&mut task);
+        }
         for kind in media_kinds {
             let (extension, suffix) = extension_for(kind, lossless, dolby, quality, multiple_media);
             let target = directory.join(format!("{basename}{suffix}.{extension}"));
@@ -1155,20 +1232,19 @@ fn run(state: &Arc<ServiceState>, id: &str, cancel: Arc<AtomicBool>) -> Result<(
         }
     }
 
-    if cancel.load(Ordering::Relaxed) {
-        return handle_cancel(&mut task);
-    }
-
-    update(
+    if !commit_stage(
         state,
         &mut task,
+        &cancel,
         json!({
             "status": "postprocessing",
             "stage": "",
             "speed": 0,
             "output": output.as_deref(),
         }),
-    );
+    ) {
+        return handle_cancel(&mut task);
+    }
 
     if options.outputs.iter().any(|k| k == "cover") {
         let cover = task
@@ -1429,6 +1505,20 @@ mod tests {
         let streams = streams_from_prepared(&json!({}));
         assert!(streams.video.is_none());
         assert!(streams.audio.is_none());
+    }
+    #[test]
+    fn float_ids_from_older_tasks_still_read_and_compare() {
+        // Earlier builds stored the extension's ids as floats; the Hi-Res check
+        // missed them and FLAC was remuxed into MP4.
+        let streams = streams_from_prepared(&json!({
+            "video": { "urls": ["https://a/v.m4s"], "quality": 80.0, "codec": 12.0 },
+            "audio": { "urls": ["https://a/a.m4s"], "id": 30251.0 },
+        }));
+        assert_eq!(streams.video.unwrap().quality, 80);
+        assert_eq!(streams.audio.unwrap().id, 30251);
+        assert!(!spec_changed(Some(&json!(80.0)), Some(&json!(80))));
+        assert!(spec_changed(Some(&json!(80)), Some(&json!(64))));
+        assert!(!spec_changed(None, None));
     }
     #[test]
     fn extensions_follow_the_node_rules() {

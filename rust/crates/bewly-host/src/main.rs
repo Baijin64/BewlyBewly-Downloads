@@ -433,16 +433,7 @@ fn register_platform(chromium_manifest: &Path, firefox_manifest: &Path) -> Resul
     let firefox_str = firefox_manifest.to_string_lossy();
     let key = "HKCU\\Software\\Mozilla\\NativeMessagingHosts\\io.bewly.download";
     let status = Command::new("reg.exe")
-        .args([
-            "add",
-            key,
-            "/ve",
-            "/t",
-            "REG_SZ",
-            "/d",
-            &firefox_str,
-            "/f",
-        ])
+        .args(["add", key, "/ve", "/t", "REG_SZ", "/d", &firefox_str, "/f"])
         .status()
         .map_err(|error| format!("注册表写入失败: {error}"))?;
     if !status.success() {
@@ -505,12 +496,10 @@ fn firefox_manifest_paths() -> Vec<PathBuf> {
     let app_support = PathBuf::from(home)
         .join("Library")
         .join("Application Support");
-    vec![
-        app_support
-            .join("Mozilla")
-            .join("NativeMessagingHosts")
-            .join("io.bewly.download.json"),
-    ]
+    vec![app_support
+        .join("Mozilla")
+        .join("NativeMessagingHosts")
+        .join("io.bewly.download.json")]
 }
 
 #[cfg(target_os = "linux")]
@@ -544,12 +533,10 @@ fn chromium_manifest_paths() -> Vec<PathBuf> {
 #[cfg(target_os = "linux")]
 fn firefox_manifest_paths() -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
-    vec![
-        PathBuf::from(home)
-            .join(".mozilla")
-            .join("native-messaging-hosts")
-            .join("io.bewly.download.json"),
-    ]
+    vec![PathBuf::from(home)
+        .join(".mozilla")
+        .join("native-messaging-hosts")
+        .join("io.bewly.download.json")]
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -621,8 +608,10 @@ fn write_native_manifests(data_dir: &Path, exe: &Path) -> Result<(PathBuf, PathB
         "type": "stdio",
         "allowed_extensions": allowed_firefox_extensions(),
     });
-    let firefox_manifest_bytes = serde_json::to_vec_pretty(&firefox_manifest).map_err(|error| error.to_string())?;
-    std::fs::write(&firefox_manifest_path, &firefox_manifest_bytes).map_err(|error| error.to_string())?;
+    let firefox_manifest_bytes =
+        serde_json::to_vec_pretty(&firefox_manifest).map_err(|error| error.to_string())?;
+    std::fs::write(&firefox_manifest_path, &firefox_manifest_bytes)
+        .map_err(|error| error.to_string())?;
 
     Ok((manifest_path, firefox_manifest_path))
 }
@@ -787,7 +776,10 @@ fn main() {
     }
     if first.starts_with("chrome-extension://")
         || first.ends_with(".json")
-        || arguments.iter().skip(1).any(|a| a == "addon@bewlybewly.com" || a.contains('@'))
+        || arguments
+            .iter()
+            .skip(1)
+            .any(|a| a == "addon@bewlybewly.com" || a.contains('@'))
     {
         std::process::exit(run_stdio(&arguments[1..]));
     }
@@ -803,10 +795,20 @@ mod tests {
 
     #[test]
     fn test_origin_allowed() {
-        assert!(origin_allowed(&["chrome-extension://knnflmlfhhiajbjolfbgkjiadnpmmlcn/".into()]));
+        assert!(origin_allowed(&[
+            "chrome-extension://knnflmlfhhiajbjolfbgkjiadnpmmlcn/".into()
+        ]));
         assert!(origin_allowed(&["addon@bewlybewly.com".into()]));
-        assert!(origin_allowed(&["native-host-firefox.json".into(), "addon@bewlybewly.com".into()]));
-        assert!(!origin_allowed(&["chrome-extension://invalidorigin12345/".into()]));
-        assert!(!origin_allowed(&["native-host-firefox.json".into(), "evil@extension.com".into()]));
+        assert!(origin_allowed(&[
+            "native-host-firefox.json".into(),
+            "addon@bewlybewly.com".into()
+        ]));
+        assert!(!origin_allowed(&[
+            "chrome-extension://invalidorigin12345/".into()
+        ]));
+        assert!(!origin_allowed(&[
+            "native-host-firefox.json".into(),
+            "evil@extension.com".into()
+        ]));
     }
 }

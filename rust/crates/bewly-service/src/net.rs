@@ -336,7 +336,9 @@ pub fn resolve(
     let timestamp = time::OffsetDateTime::now_utc().unix_timestamp();
     let use_durl = bewly_media::ffmpeg().is_none()
         && outputs.iter().any(|kind| kind == "video")
-        && !outputs.iter().any(|kind| kind == "audio" || kind == "silent" || kind == "mp3");
+        && !outputs
+            .iter()
+            .any(|kind| kind == "audio" || kind == "silent" || kind == "mp3");
     let fnval = if use_durl { "1" } else { "4048" };
     let query = crate::wbi::sign(
         &[

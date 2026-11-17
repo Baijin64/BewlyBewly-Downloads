@@ -149,7 +149,12 @@ impl Store {
         Ok(())
     }
 
-    pub fn update_task_progress(&self, id: &str, percent: u32, speed: u64) -> Result<bool, StoreError> {
+    pub fn update_task_progress(
+        &self,
+        id: &str,
+        percent: u32,
+        speed: u64,
+    ) -> Result<bool, StoreError> {
         let rows = self.connection.execute(
             "UPDATE tasks SET data = json_set(data, '$.progress', ?2, '$.speed', ?3) WHERE id = ?1 AND json_extract(data, '$.status') = 'downloading'",
             params![id, percent, speed],
@@ -500,7 +505,10 @@ mod tests {
             .query_plan("SELECT 1 FROM tasks WHERE json_extract(data, '$.status') IN ('queued', 'downloading') LIMIT 1")
             .unwrap()
             .join(" | ");
-        assert!(plan.contains("task_status"), "plan should use task_status: {plan}");
+        assert!(
+            plan.contains("task_status"),
+            "plan should use task_status: {plan}"
+        );
 
         // Test Head-of-Line blocking prevention when has_cookie is false
         // t2 is queued but has no "prepared" field.
@@ -545,7 +553,9 @@ mod tests {
             }))
             .unwrap();
 
-        let updated = store.update_task_progress("t-downloading", 45, 1024000).unwrap();
+        let updated = store
+            .update_task_progress("t-downloading", 45, 1024000)
+            .unwrap();
         assert!(updated);
         let task = store.task("t-downloading").unwrap().unwrap();
         assert_eq!(task["progress"], 45);
@@ -559,7 +569,9 @@ mod tests {
         assert_eq!(paused_task["speed"], 0);
         assert_eq!(paused_task["status"], "paused");
 
-        let updated_nonexistent = store.update_task_progress("t-nonexistent", 50, 100).unwrap();
+        let updated_nonexistent = store
+            .update_task_progress("t-nonexistent", 50, 100)
+            .unwrap();
         assert!(!updated_nonexistent);
     }
 }

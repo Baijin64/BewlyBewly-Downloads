@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::naming::{date_value, plan_location, utf16_len, validate_template, Streams, TaskView, VideoStream};
+use crate::naming::{
+    date_value, plan_location, utf16_len, validate_template, Streams, TaskView, VideoStream,
+};
 
 pub const OUTPUT_KINDS: [&str; 9] = [
     "video", "silent", "audio", "mp3", "cover", "xml", "ass", "srt", "nfo",
