@@ -8,6 +8,9 @@ using System.IO;
 public static class TrayArtwork
 {
     public static readonly Color Accent = Color.FromArgb(0, 161, 214);
+    public static readonly Color BadgeTopLeft = Color.FromArgb(203, 232, 255);
+    public static readonly Color BadgeBottomRight = Color.FromArgb(242, 249, 255);
+
     public static GraphicsPath Rounded(RectangleF bounds, float radius)
     {
         var path = new GraphicsPath();
@@ -19,6 +22,7 @@ public static class TrayArtwork
         path.CloseFigure();
         return path;
     }
+
     public static void Glyph(Graphics g, string name, RectangleF rect, Color color, float penWidth = 1.8f)
     {
         var state = g.Save();
@@ -44,26 +48,90 @@ public static class TrayArtwork
         }
         g.Restore(state);
     }
+
+    static bool DrawMascot(Graphics g, int size)
+    {
+        float pad = Math.Max(2f, size * 0.13f);
+        var targetRect = new RectangleF(pad, pad, Math.Max(8f, size - pad * 2), Math.Max(8f, size - pad * 2));
+
+        using (var stream = typeof(TrayArtwork).Assembly.GetManifestResourceStream("BewlyMascot.png"))
+        {
+            if (stream != null)
+            {
+                using (var src = Image.FromStream(stream))
+                {
+                    g.DrawImage(src, targetRect);
+                    return true;
+                }
+            }
+        }
+
+        string file = FindExternalMascotPath();
+        if (file != null)
+        {
+            using (var src = Image.FromFile(file))
+            {
+                g.DrawImage(src, targetRect);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    static string FindExternalMascotPath()
+    {
+        string[] roots = { Directory.GetCurrentDirectory(), AppDomain.CurrentDomain.BaseDirectory };
+        string[] rels = {
+            Path.Combine("Assets", "BewlyMascot.png"),
+            Path.Combine("platforms", "windows", "Assets", "BewlyMascot.png"),
+            Path.Combine("assets", "icon-512.png")
+        };
+
+        foreach (string start in roots)
+        {
+            var dir = string.IsNullOrEmpty(start) ? null : new DirectoryInfo(start);
+            for (int depth = 0; dir != null && depth < 8; depth++, dir = dir.Parent)
+            {
+                foreach (string rel in rels)
+                {
+                    string candidate = Path.Combine(dir.FullName, rel);
+                    if (File.Exists(candidate)) return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
     public static Bitmap Bitmap(int size)
     {
         var image = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        using (var g = Graphics.FromImage(image)) {
-            g.Clear(Color.Transparent); g.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var g = Graphics.FromImage(image))
+        {
+            g.Clear(Color.Transparent);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.CompositingQuality = CompositingQuality.HighQuality;
+
             float inset = Math.Max(0.5f, size / 32f);
-            using (var shape = Rounded(new RectangleF(inset, inset, size - inset * 2, size - inset * 2), size * 0.24f))
-            using (var fill = new SolidBrush(Accent)) g.FillPath(fill, shape);
-            // Full-bleed layout: the 24-unit glyph grid is scaled past the tile edges so the
-            // arrow and tray span ~84% of the tile width with only ~6-8% optical margins,
-            // matching how the extension logo fills its icon canvas. Every asset size is
-            // rendered natively (never downscaled from a master bitmap); below 96 px the
-            // stroke is thickened so antialiasing does not wash the mark out.
-            // Grid geometry: content incl. stroke spans x 2.5-21.5, y 1.5-21.5 of 24 units.
-            float grid = size * 1.053f;
-            float penWidth = size >= 96 ? 2.6f : 3.0f;
-            Glyph(g, "download", new RectangleF(-size * 0.027f, 0f, grid, grid), Color.White, penWidth);
+            var tileRect = new RectangleF(inset, inset, size - inset * 2, size - inset * 2);
+            using (var shape = Rounded(tileRect, size * 0.22f))
+            using (var grad = new LinearGradientBrush(tileRect, BadgeTopLeft, BadgeBottomRight, 45f))
+            {
+                g.FillPath(grad, shape);
+                if (!DrawMascot(g, size))
+                {
+                    using (var fallbackBg = new SolidBrush(Accent)) g.FillPath(fallbackBg, shape);
+                    float grid = size * 1.053f;
+                    float penWidth = size >= 96 ? 2.6f : 3.0f;
+                    Glyph(g, "download", new RectangleF(-size * 0.027f, 0f, grid, grid), Color.White, penWidth);
+                }
+            }
         }
         return image;
     }
+
     public static void WriteIcon(string file)
     {
         int[] sizes = { 16, 20, 24, 32, 40, 48, 64, 128, 256 };

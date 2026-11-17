@@ -9,9 +9,14 @@
     <StripSymbols>true</StripSymbols>
     <InvariantGlobalization>true</InvariantGlobalization>
     <ApplicationManifest>NativeHost.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\BewlyDownload.ico</ApplicationIcon>
     <AssemblyName>BewlyDownloadTray</AssemblyName>
     <RootNamespace>BewlyDownloadTray</RootNamespace>
     <NoWarn>$(NoWarn);SYSLIB0014;IL2026;IL3050</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\BewlyMascot.png" LogicalName="BewlyMascot.png" />
+  </ItemGroup>
 
 </Project>
