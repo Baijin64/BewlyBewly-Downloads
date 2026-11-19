@@ -99,19 +99,39 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  posix:
-    name: ${{ matrix.target }} host
+  macos:
+    name: macOS DMG (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: linux-x64
-            os: ubuntu-24.04
           - target: darwin-arm64
+            arch: arm64
             os: macos-14
           - target: darwin-x64
+            arch: x64
             os: macos-15-intel
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build host
+        working-directory: rust
+        run: cargo build --release -p bewly-host
+      - name: Build bundled LGPL FFmpeg
+        run: bash scripts/toolchain/build-ffmpeg.sh "${{ matrix.target }}" "dist/toolchain/ffmpeg/${{ matrix.target }}"
+      - name: Build DMG
+        run: bash scripts/build-macos-dmg.sh "${{ matrix.target }}" "dist/toolchain/ffmpeg/${{ matrix.target }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-${{ matrix.arch }}-dmg
+          path: dist/Bewly-DownloadHelper-*-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  linux:
+    name: linux-x64 host
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     defaults:
       run:
@@ -122,19 +142,19 @@ jobs:
         run: |
           cargo build --release -p bewly-host
           mkdir -p ../dist
-          cp target/release/bewly-host "../dist/bewly-host-${{ matrix.target }}"
-          chmod +x "../dist/bewly-host-${{ matrix.target }}"
-          tar -czf "../dist/bewly-host-${{ matrix.target }}.tar.gz" -C ../dist "bewly-host-${{ matrix.target }}"
+          cp target/release/bewly-host "../dist/bewly-host-linux-x64"
+          chmod +x "../dist/bewly-host-linux-x64"
+          tar -czf "../dist/bewly-host-linux-x64.tar.gz" -C ../dist "bewly-host-linux-x64"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ matrix.target }}-host
-          path: dist/bewly-host-${{ matrix.target }}.tar.gz
+          name: linux-x64-host
+          path: dist/bewly-host-linux-x64.tar.gz
           if-no-files-found: error
           retention-days: 7
 
   publish:
     name: Publish release
-    needs: [extension, windows, posix]
+    needs: [extension, windows, macos, linux]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
