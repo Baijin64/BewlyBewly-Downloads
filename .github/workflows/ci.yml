@@ -29,6 +29,8 @@ jobs:
         run: pnpm exec eslint src scripts/*.ts *.ts
       - name: Typecheck
         run: pnpm exec vue-tsc --noEmit
+      - name: Typecheck scripts
+        run: pnpm exec tsc -p scripts/tsconfig.json --noEmit
       - name: Test extension
         run: pnpm exec vitest run
       - name: Build extension
@@ -41,3 +43,43 @@ jobs:
           path: dist/*-Chrome.zip
           if-no-files-found: error
           retention-days: 14
+
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust tests
+        run: cargo test --workspace
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  windows-tray:
+    name: Windows tray build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build Windows tray
+        run: dotnet build platforms/windows/BewlyDownloadTray.csproj -c Release
+
+  android:
+    name: Android unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Accept Android SDK licenses
+        run: |
+          if [ -x "${ANDROID_HOME:-}/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          fi
+      - name: Run Android unit tests
+        working-directory: platforms/android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest --no-daemon --console=plain
