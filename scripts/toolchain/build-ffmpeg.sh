@@ -26,6 +26,17 @@ LAME_SHA256=ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
 
 mkdir -p "$WORK" "$CACHE"
 
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "neither sha256sum nor shasum found" >&2
+    exit 1
+  fi
+}
+
 fetch() {
   local url="$1" file="$2" sum="$3"
   if [ ! -f "$file" ]; then
@@ -36,10 +47,12 @@ fetch() {
       sleep 5
     done
   fi
-  echo "$sum  $file" | sha256sum -c - >/dev/null || {
-    echo "checksum mismatch for $file (expected $sum, got $(sha256sum "$file" | cut -d' ' -f1))" >&2
+  local got
+  got="$(sha256_of "$file")"
+  if [ "$got" != "$sum" ]; then
+    echo "checksum mismatch for $file (expected $sum, got $got)" >&2
     exit 1
-  }
+  fi
 }
 
 # --- toolchain per target ---------------------------------------------------
@@ -47,6 +60,7 @@ HOST=""
 EXE="ffmpeg"
 CROSS_FLAGS=()
 LAME_ENV=()
+LAME_BUILD_FLAGS=()
 case "$TARGET" in
   win32-x64)
     HOST=x86_64-w64-mingw32
@@ -81,7 +95,11 @@ case "$TARGET" in
       --sysroot="$TOOLS/sysroot" --enable-pic)
     LAME_ENV=(CC="$CC" AR="$TOOLS/bin/llvm-ar" RANLIB="$TOOLS/bin/llvm-ranlib")
     ;;
-  linux-x64|darwin-arm64|darwin-x64)
+  darwin-arm64)
+    # LAME 3.100's bundled config.guess predates Apple Silicon arm64-apple-darwin.
+    LAME_BUILD_FLAGS=(--build=aarch64-apple-darwin)
+    ;;
+  linux-x64|darwin-x64)
     ;;
   *)
     echo "unknown target: $TARGET" >&2
@@ -104,6 +122,7 @@ tar -xzf "$CACHE/lame-$LAME_VERSION.tar.gz" -C "$WORK"
   # but the export list is read regardless on some toolchains.
   sed -i.bak '/lame_init_old/d' include/libmp3lame.sym
   env ${LAME_ENV[@]+"${LAME_ENV[@]}"} ./configure --prefix="$PREFIX" ${HOST:+--host=$HOST} \
+    ${LAME_BUILD_FLAGS[@]+"${LAME_BUILD_FLAGS[@]}"} \
     --enable-static --disable-shared --disable-frontend --disable-decoder \
     --disable-gtktest --with-pic
   make -j"$JOBS"

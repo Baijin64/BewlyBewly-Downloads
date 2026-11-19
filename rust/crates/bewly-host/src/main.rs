@@ -757,12 +757,13 @@ fn main() {
         println!("bewly-host {VERSION}");
         return;
     }
-    if first == "--register" || first == "--install" || first.is_empty() {
+    let is_gui_launch = first.is_empty() || first.starts_with("-psn_");
+    if first == "--register" || first == "--install" || is_gui_launch {
         if let Err(error) = register() {
             eprintln!("{error}");
             std::process::exit(1);
         }
-        if first.is_empty() {
+        if is_gui_launch {
             let _ = start_service("manual");
         }
         return;

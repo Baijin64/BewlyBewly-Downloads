@@ -54,10 +54,22 @@ if (target.startsWith('win32')) {
   process.exit(result.status ?? 1)
 }
 
-if (target.startsWith('darwin') || target.startsWith('linux')) {
+if (target.startsWith('darwin')) {
+  const flags: string[] = [target]
+  if (shared.bin)
+    flags.push(shared.bin)
+  const result = spawnSync(
+    'bash',
+    [path.join(repoRoot, 'scripts', 'build-macos-dmg.sh'), ...flags],
+    { stdio: 'inherit' },
+  )
+  process.exit(result.status ?? 1)
+}
+
+if (target.startsWith('linux')) {
   console.error(
     `${target} 打包脚本仍在沿用已退役的 Node 目录结构（launcher.sh / fetch-node.sh / node_modules 裁剪），尚未重写。`
-    + '请先运行 cargo build --release；Windows 打包不受影响。',
+    + '请先运行 cargo build --release；Windows 与 macOS 打包不受影响。',
   )
   process.exit(3)
 }

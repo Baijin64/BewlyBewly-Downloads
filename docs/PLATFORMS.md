@@ -7,14 +7,14 @@
 | 能力 | Windows | Android | macOS | Linux |
 | --- | --- | --- | --- | --- |
 | 核心引擎 | Rust `bewly-host` | Rust `bewly-android`（JNI） | Rust `bewly-host` | Rust `bewly-host` |
-| 桌面/移动界面 | NativeAOT 托盘（吉祥物图标） | Jetpack Compose 独立 App | 菜单栏源码已保留（待重打包） | 无托盘界面 |
-| 合流 / MP3 | 内置精简 LGPL `bin\ffmpeg.exe` | 内置 `jniLibs/<abi>/libffmpeg.so` | 可由 `build-ffmpeg.sh` 编译 | 可由 `build-ffmpeg.sh` 编译 |
+| 桌面/移动界面 | NativeAOT 托盘（吉祥物图标） | Jetpack Compose 独立 App | Swift 菜单栏托盘（`BewlyTray`） | 无托盘界面 |
+| 合流 / MP3 | 内置精简 LGPL `bin\ffmpeg.exe` | 内置 `jniLibs/<abi>/libffmpeg.so` | 内置精简 LGPL `bin/ffmpeg` | 可由 `build-ffmpeg.sh` 编译 |
 | 文件/目录选择 | 原生对话框（`rfd`） | MediaStore 自动导出 + SAF 文档选择 | 原生对话框 / `BewlyTray` | `rfd` / 手填路径 |
-| 剪贴板监听 | ✅ | 手动粘贴 + 系统分享接收 | 托盘源码支持 | ❌ |
-| 下载完成关机 | ✅（可取消 30s 倒计时） | ❌ | 托盘源码支持 | ❌ |
+| 剪贴板监听 | ✅ | 手动粘贴 + 系统分享接收 | ✅ 菜单栏托盘支持 | ❌ |
+| 下载完成关机 | ✅（可取消 30s 倒计时） | ❌ | ✅ 菜单栏托盘支持 | ❌ |
 | 登录信息保护 | DPAPI | 应用私有目录（`allowBackup=false`） | Keychain / 0600 文件 | 0600 文件 |
 | 外部运行时依赖 | 无（无需 Node.js / aria2） | 无 | 无 | 无 |
-| 当前分发状态 | ✅ MSIX 完整构建 | ✅ Gradle APK 构建（`arm64-v8a`） | 仅裸二进制 `bewly-host` | 仅裸二进制 `bewly-host` |
+| 当前分发状态 | ✅ MSIX 完整构建 | ✅ Gradle APK 构建（`arm64-v8a`） | ✅ `.dmg` 安装镜像（`arm64` / `x64`） | 仅裸二进制 `bewly-host` |
 
 ## Windows
 
@@ -36,11 +36,29 @@ Android 独立客户端位于 `platforms/android/`（Jetpack Compose + Foregroun
 
 详细步骤见 [platforms/android/ANDROID_STUDIO_TASK.md](../platforms/android/ANDROID_STUDIO_TASK.md)。
 
-## macOS / Linux（待重写打包脚本）
+## macOS（`.dmg` 安装镜像）
 
-- Rust 核心与 `bewly-host` 已在 GitHub Actions 的 `linux-x64`、`darwin-arm64`、`darwin-x64` 上通过测试并产出裸二进制（`bewly-host-<target>.tar.gz`）。
-- `scripts/toolchain/build-ffmpeg.sh` 已支持构建各平台的精简 LGPL FFmpeg。
-- `platforms/linux/install.sh`、`platforms/linux/bewly-download.service` 及 macOS `.app` 打包脚本目前仍停留在已退役的 Node 目录结构（`launcher.sh`、`fetch-node.sh`），尚未重写为 Rust 单文件宿主 + 内置 FFmpeg 布局，因此 `scripts/build-helper.ts` 对 `linux` / `darwin` 目标会直接提示并返回退出码 3。
+macOS 打包脚本为 [scripts/build-macos-dmg.sh](../scripts/build-macos-dmg.sh)（也可通过 `pnpm build:helper:macos` 调用），在 macOS 或 GitHub Actions（`macos-14` / `macos-15-intel`）上组装 `BewlyDownload.app`（内含 Rust `BewlyDownload`、Swift `BewlyTray`、内置 LGPL `bin/ffmpeg` 与吉祥物图标），执行 ad-hoc 签名并打包为带 `/Applications` 软链的 `.dmg`：
+
+```sh
+(cd rust && cargo build --release -p bewly-host)
+bash scripts/toolchain/build-ffmpeg.sh darwin-arm64 dist/toolchain/ffmpeg/darwin-arm64
+bash scripts/build-macos-dmg.sh darwin-arm64 dist/toolchain/ffmpeg/darwin-arm64
+```
+
+安装方式：双击打开 `Bewly-DownloadHelper-<版本>-macos-<arch>.dmg`，将 `BewlyDownload.app` 拖入 `Applications`。由于未做 Apple 公证，首次打开前请执行一次：
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/BewlyDownload.app"
+```
+
+或在「系统设置 → 隐私与安全性」中点击「仍要打开」。双击启动一次后会自动注册 Chrome / Edge / Chromium / Brave / Firefox 的原生消息配置并在菜单栏出现图标。
+
+## Linux（待重写打包脚本）
+
+- Rust 核心与 `bewly-host` 已在 GitHub Actions 的 `linux-x64` 上通过测试并产出裸二进制（`bewly-host-linux-x64.tar.gz`）。
+- `scripts/toolchain/build-ffmpeg.sh` 已支持构建 `linux-x64` 精简 LGPL FFmpeg。
+- `platforms/linux/install.sh` 与 `platforms/linux/bewly-download.service` 目前仍停留在已退役的 Node 目录结构（`launcher.sh`、`fetch-node.sh`），尚未重写为 Rust 单文件宿主 + 内置 FFmpeg 布局，因此 `scripts/build-helper.ts` 对 `linux` 目标会直接提示并返回退出码 3。
 
 ## 构建命令
 
