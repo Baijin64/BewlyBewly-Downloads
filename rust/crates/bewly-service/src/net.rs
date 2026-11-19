@@ -189,6 +189,7 @@ pub fn inspect(value: &str, cookie: &str) -> Result<Value, String> {
             .set("Referer", "https://www.bilibili.com/")
             .set("Cookie", &cookie_header)
             .call()
+            .map_err(Box::new)
     };
     let response = match send(&wbi_endpoint) {
         Ok(resp) if resp.status() == 200 => resp,

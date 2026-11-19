@@ -26,6 +26,9 @@ class BewlyDownloadService : Service() {
     private val binder = LocalBinder()
     private var monitorExecutor: ScheduledExecutorService? = null
     private var lastActiveCount: Int = 0
+    private var lastNotificationKey: String? = null
+    @Volatile
+    private var monitorRunning: Boolean = false
 
     inner class LocalBinder : Binder() {
         fun getService(): BewlyDownloadService = this@BewlyDownloadService
@@ -88,30 +91,40 @@ class BewlyDownloadService : Service() {
         if (monitorExecutor != null) return
         val exec = Executors.newSingleThreadScheduledExecutor()
         monitorExecutor = exec
-        exec.scheduleWithFixedDelay(
+        monitorRunning = true
+        scheduleNextPoll(exec, ACTIVE_POLL_INTERVAL_MS)
+    }
+
+    private fun scheduleNextPoll(exec: ScheduledExecutorService, delayMs: Long) {
+        if (!monitorRunning || exec.isShutdown) return
+        exec.schedule(
             {
-                try {
-                    pollAndUpdateNotification()
+                if (!monitorRunning) return@schedule
+                val nextDelay = try {
+                    if (pollAndUpdateNotification()) ACTIVE_POLL_INTERVAL_MS else IDLE_POLL_INTERVAL_MS
                 } catch (e: Exception) {
                     Log.w(TAG, "Notification monitor tick error", e)
+                    IDLE_POLL_INTERVAL_MS
                 }
+                scheduleNextPoll(exec, nextDelay)
             },
-            1500L,
-            1500L,
+            delayMs,
             TimeUnit.MILLISECONDS
         )
     }
 
     private fun stopMonitor() {
+        monitorRunning = false
+        lastNotificationKey = null
         monitorExecutor?.shutdownNow()
         monitorExecutor = null
     }
 
-    private fun pollAndUpdateNotification() {
-        val client = createRpcClient(this) ?: return
+    private fun pollAndUpdateNotification(): Boolean {
+        val client = createRpcClient(this) ?: return false
         val res = client.queryTasks("all", page = 1, pageSize = 100)
-        if (res !is RpcResult.Success) return
-        val json = res.result as? JSONObject ?: return
+        if (res !is RpcResult.Success) return false
+        val json = res.result as? JSONObject ?: return false
         val items = json.optJSONArray("items") ?: JSONArray()
 
         var activeCount = 0
@@ -151,7 +164,7 @@ class BewlyDownloadService : Service() {
             }
         }
 
-        val manager = getSystemService(NotificationManager::class.java) ?: return
+        val manager = getSystemService(NotificationManager::class.java) ?: return activeCount > 0
         if (activeCount > 0) {
             val avgProgress = if (activeCount > 1) {
                 (totalProgressSum / activeCount).toInt().coerceIn(0, 100)
@@ -165,20 +178,29 @@ class BewlyDownloadService : Service() {
                 "正在下载 $activeCount 个任务 · $avgProgress%"
             }
             val content = "$leadTitle ($speedText)"
-            manager.notify(
-                NOTIFICATION_ID,
-                buildStatusNotification(title, content, avgProgress, true)
-            )
+            val notifKey = "active|$title|$content|$avgProgress"
+            if (notifKey != lastNotificationKey) {
+                lastNotificationKey = notifKey
+                manager.notify(
+                    NOTIFICATION_ID,
+                    buildStatusNotification(title, content, avgProgress, true)
+                )
+            }
         } else {
             if (lastActiveCount > 0) {
                 postCompletionAlert(manager, lastActiveCount)
             }
-            manager.notify(
-                NOTIFICATION_ID,
-                buildStatusNotification("BewlyBewly 下载服务", "引擎待命中，等待新任务", 0, false)
-            )
+            val notifKey = "idle"
+            if (notifKey != lastNotificationKey) {
+                lastNotificationKey = notifKey
+                manager.notify(
+                    NOTIFICATION_ID,
+                    buildStatusNotification("BewlyBewly 下载服务", "引擎待命中，等待新任务", 0, false)
+                )
+            }
         }
         lastActiveCount = activeCount
+        return activeCount > 0
     }
 
     private fun postCompletionAlert(manager: NotificationManager, count: Int) {
@@ -298,6 +320,8 @@ class BewlyDownloadService : Service() {
         const val EVENTS_CHANNEL_ID = "bewly_download_events_channel"
         const val NOTIFICATION_ID = 1001
         const val EVENT_NOTIFICATION_ID = 1002
+        private const val ACTIVE_POLL_INTERVAL_MS = 1500L
+        private const val IDLE_POLL_INTERVAL_MS = 5000L
 
         const val ACTION_START = "io.bewly.download.action.START"
         const val ACTION_STOP = "io.bewly.download.action.STOP"

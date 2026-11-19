@@ -56,9 +56,10 @@ fun BiliLoginDialog(
     var statusTip by remember { mutableStateOf("请使用手机号 + 验证码登录 B 站") }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var captured by remember { mutableStateOf(false) }
+    var cookiesCleared by remember { mutableStateOf(false) }
 
     fun tryExtractCookie(): Boolean {
-        if (captured) return true
+        if (!cookiesCleared || captured) return captured
         val cm = CookieManager.getInstance()
         val mainCookie = cm.getCookie("https://www.bilibili.com").orEmpty()
         val passportCookie = cm.getCookie("https://passport.bilibili.com").orEmpty()
@@ -72,7 +73,16 @@ fun BiliLoginDialog(
     }
 
     LaunchedEffect(Unit) {
-        // Clear stale login cookies only if user explicitly starts a fresh web login when unauthenticated
+        val cm = CookieManager.getInstance()
+        cm.removeAllCookies {
+            cm.flush()
+            cookiesCleared = true
+            webViewRef?.loadUrl(currentUrl)
+        }
+    }
+
+    LaunchedEffect(cookiesCleared) {
+        if (!cookiesCleared) return@LaunchedEffect
         while (!captured) {
             delay(1000)
             if (tryExtractCookie()) break
@@ -198,7 +208,9 @@ fun BiliLoginDialog(
                                     tryExtractCookie()
                                 }
                             }
-                            loadUrl(currentUrl)
+                            if (cookiesCleared) {
+                                loadUrl(currentUrl)
+                            }
                             webViewRef = this
                         }
                     }

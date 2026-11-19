@@ -341,6 +341,13 @@ class MainScreenViewModel(
 
     fun saveSessionCookie(cookie: String) {
         val trimmed = cookie.trim()
+        if (trimmed.isEmpty()) {
+            runCatching {
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.removeAllCookies(null)
+                cm.flush()
+            }
+        }
         _benchState.update { it.copy(sessionCookie = trimmed) }
         viewModelScope.launch(Dispatchers.IO) {
             val client = rpcClient ?: appContext?.let { getOrRefreshClient(it) }
