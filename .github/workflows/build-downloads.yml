@@ -112,7 +112,7 @@ jobs:
           # macos-13 was retired and leaves the job queued forever; the Intel
           # label is macos-15-intel.
           - target: darwin-arm64
-            os: macos-14
+            os: macos-15
           - target: darwin-x64
             os: macos-15-intel
     runs-on: ${{ matrix.os }}
