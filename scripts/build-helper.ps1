@@ -64,6 +64,7 @@ Source URLs, checksums and the exact configure flags are in FFmpeg-SOURCES.txt.
 BewlyBewly MIT and retained dependency license notices are included in this directory.
 '@ | Set-Content -LiteralPath (Join-Path $stage 'licenses\THIRD-PARTY.txt') -Encoding utf8
 Add-Type -Path (Join-Path $projectRoot 'platforms\windows\TrayArtwork.cs') -ReferencedAssemblies System.Drawing
+[TrayArtwork]::MascotOverridePath = Join-Path $projectRoot 'platforms\windows\Assets\BewlyMascot.png'
 [TrayArtwork]::WriteIcon((Join-Path $stage 'Assets\BewlyDownload.ico'))
 
 # Build Native AOT BewlyDownloadTray

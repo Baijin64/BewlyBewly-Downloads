@@ -25,15 +25,19 @@ export default antfu(
       'no-alert': 'off',
       'style/quote-props': 'off',
     },
-    eslint: {
-      ignorePatterns: [
-        'dist',
-        'node_modules',
-        'public',
-        'extension',
-        'extension-firefox',
-      ],
-    },
+  },
+  {
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'public/**',
+      'extension/**',
+      'extension-firefox/**',
+      'extension-safari/**',
+      'platforms/**',
+      'rust/**',
+      '.workbuddy/**',
+    ],
   },
   {
     plugins: {

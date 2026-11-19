@@ -10,6 +10,7 @@ public static class TrayArtwork
     public static readonly Color Accent = Color.FromArgb(0, 161, 214);
     public static readonly Color BadgeTopLeft = Color.FromArgb(203, 232, 255);
     public static readonly Color BadgeBottomRight = Color.FromArgb(242, 249, 255);
+    public static string MascotOverridePath;
 
     public static GraphicsPath Rounded(RectangleF bounds, float radius)
     {
@@ -81,6 +82,9 @@ public static class TrayArtwork
 
     static string FindExternalMascotPath()
     {
+        if (!string.IsNullOrEmpty(MascotOverridePath) && File.Exists(MascotOverridePath))
+            return MascotOverridePath;
+
         string[] roots = { Directory.GetCurrentDirectory(), AppDomain.CurrentDomain.BaseDirectory };
         string[] rels = {
             Path.Combine("Assets", "BewlyMascot.png"),
