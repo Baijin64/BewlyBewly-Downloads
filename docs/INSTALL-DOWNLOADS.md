@@ -42,6 +42,6 @@ CRX 签名和固定 ID 已检查，但本项目尚未通过 Chrome Web Store/Edg
 
 浏览器扩展与连接器分别更新。旧版 Node 连接器的任务与设置在首次启动时按需迁移，`downloads.sqlite` 沿用同一 schema，中断的任务可以继续。
 
-尚未完成的部分：内置 libav 合流、macOS/Linux 安装器、旧版 `.bilidownexport` 历史文件导入（目前会明确报错而不是导入一半）、缺 Node 环境的完整 UAC/MSI 交互验收、真实慢网/CDN 切换测试。
+尚未完成的部分：内置 libav 合流、macOS/Linux 安装器、真实慢网/CDN 切换测试、Android 真机全链路回归。历史 `.bilidownexport` 文件导入/导出及旧版 LevelDB/SQLite 迁移已在 Rust 助手中实现。
 
 本分支没有内置 AI 模型，也不会因为下载功能将视频上传到 AI 服务。

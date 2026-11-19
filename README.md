@@ -1,16 +1,16 @@
 # BewlyBewly + Downloads
 
-Personal maintenance fork for the maintainer and friends. Browser extension **0.44.6**, Windows connector **0.2.8**. This is an independent fork, not an official continuation of either upstream project.
+Personal maintenance fork for the maintainer and friends. Browser extension **0.44.7**, Rust local helper **0.3.0** (Windows MSIX + Android companion app **0.44.7**). This is an independent fork, not an official continuation of either upstream project.
 
 - **Original BewlyBewly project:** [BewlyBewly/BewlyBewly](https://github.com/BewlyBewly/BewlyBewly), originally by [Hakadao](https://github.com/hakadao). Its MIT license and attribution are preserved.
-- **Bilidown author:** [王子周棋洛 — https://zhouql.vip/](https://zhouql.vip/). Bilidown's workflow and settings inspired the download integration; the local download core in this fork is independently implemented.
+- **Bilidown author:** [王子周棋洛 — https://zhouql.vip/](https://zhouql.vip/). Bilidown's workflow and settings inspired the download integration; the local download core in this fork is independently implemented in Rust.
 - **This fork and downloads:** [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads). Private repository assets require repository access.
 
-For installation and builds, see [中文说明](README-cmn_CN.md), [personal-fork installation](docs/INSTALL-DOWNLOADS.md), and [build instructions](docs/BUILD-DOWNLOADS.md).
+For installation and builds, see [中文说明](README-cmn_CN.md), [personal-fork installation](docs/INSTALL-DOWNLOADS.md), [platform matrix](docs/PLATFORMS.md), and [build instructions](docs/BUILD-DOWNLOADS.md).
 
 The download UI opens without starting the local download service. Download and queue operations start it on demand after first-use confirmation; it exits after work finishes. Launching the connector manually from Windows keeps it resident. See [process lifecycle](docs/DOWNLOAD-LIFECYCLE.md).
 
-The ZIP can be extracted and loaded with developer mode in Chrome/Edge. A valid CRX signature does not establish that a browser will allow direct installation or activation. Windows MSIX builds use a local development certificate; other computers must explicitly trust the included public certificate before installation. Node.js is detected locally and can be downloaded and installed from the connector when missing.
+The ZIP can be extracted and loaded with developer mode in Chrome/Edge. A valid CRX signature does not establish that a browser will allow direct installation or activation. The helper (`BewlyDownloadHost.exe` + NativeAOT tray `BewlyDownloadTray.exe`) is now pure Rust with bundled LGPL FFmpeg and no longer requires Node.js or aria2. Windows MSIX builds use a local development certificate; other computers must explicitly trust the included public certificate before installation. An Android companion app (`platforms/android`) embeds the same Rust core via JNI and exports completed media through MediaStore.
 
 The original upstream README is retained below. Its store links install the original extension, which does not include this fork's download features.
 

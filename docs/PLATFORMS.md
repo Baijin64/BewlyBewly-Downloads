@@ -1,66 +1,57 @@
 # 下载助手平台支持
 
-本目录记录 Windows / macOS / Linux 三端下载助手的安装、排障与构建方式。协议与业务逻辑三端共用（`native/*.mjs`），平台差异集中在 `native/platform/` 与各自的安装外壳。
+本目录记录 Windows / Android / macOS / Linux 四端下载助手的能力、安装与构建现状。核心协议、分片下载引擎、任务持久化与业务逻辑已统一由纯 Rust 实现（`rust/crates/*`），平台差异集中在 `platforms/` 下的宿主与安装包外壳；旧版 `native/`（Node.js / aria2）已彻底移除。
 
 ## 能力对照
 
-| 能力 | Windows | macOS | Linux |
-|---|---|---|---|
-| 系统托盘 | ✅ | ✅ 菜单栏 | ❌ 无界面 |
-| 文件/目录选择 | ✅ | ✅ | 需 zenity 或 kdialog，否则手填路径 |
-| 剪贴板监听 | ✅ | ✅ | ❌ |
-| 下载完成关机 | ✅ | ✅ | ❌ |
-| 登录信息保护 | DPAPI | Keychain（失败降级 0600 文件） | 0600 文件 |
-| Node 运行时 | 官方 MSI（按需） | 系统 ≥24，缺失则自动下载 | 同 macOS |
-| 分发 | MSIX | `.app` zip（ad-hoc 签名） | `tar.gz` + `install.sh` |
-
-## macOS
-
-1. 解压 `Bewly-DownloadHelper-<版本>-macos-arm64.zip`，把「BewlyDownload.app」拖进 `/Applications`。
-2. 首次打开：由于未做公证，macOS 15+ 需在「系统设置 → 隐私与安全性」点「仍要打开」；也可执行
-   `xattr -dr com.apple.quarantine "/Applications/BewlyDownload.app"`。
-3. App 首次运行会：校验/安装 Node 24 到 `~/Library/Application Support/BewlyDownload/runtime`、写入 Chrome/Edge/Chromium/Brave 的原生消息清单、启动后台服务与菜单栏图标。
-4. 重启浏览器，在扩展中点击连接。
-
-排障：
-
-- 菜单栏没有图标 → `~/Library/Application Support/BewlyDownload/logs/` 查看日志，或手动执行
-  `"/Applications/BewlyDownload.app/Contents/Resources/native/posix/launcher.sh" status`。
-- 扩展提示未连接 → 确认清单存在：
-  `ls ~/Library/Application\ Support/Google/Chrome/NativeMessagingHosts/`。
-
-## Linux
-
-```sh
-tar -xzf Bewly-DownloadHelper-<版本>-linux-x64.tar.gz
-cd Bewly-DownloadHelper-<版本>-linux-x64    # 或解压目录
-sh install.sh                                # 装到 ~/.local，无需 root
-sh install.sh --systemd                      # 可选：systemd --user 常驻
-```
-
-安装脚本会：复制到 `~/.local/opt/bewly-download/app`、写入 4 个浏览器的清单、生成 desktop 入口、必要时把 Node 24 下载到 `~/.local/share/bewly-download/runtime`。
-
-卸载：`sh uninstall.sh`（保留下载记录与运行时）；`sh uninstall.sh --purge` 一并删除。
+| 能力 | Windows | Android | macOS | Linux |
+| --- | --- | --- | --- | --- |
+| 核心引擎 | Rust `bewly-host` | Rust `bewly-android`（JNI） | Rust `bewly-host` | Rust `bewly-host` |
+| 桌面/移动界面 | NativeAOT 托盘（吉祥物图标） | Jetpack Compose 独立 App | 菜单栏源码已保留（待重打包） | 无托盘界面 |
+| 合流 / MP3 | 内置精简 LGPL `bin\ffmpeg.exe` | 内置 `jniLibs/<abi>/libffmpeg.so` | 可由 `build-ffmpeg.sh` 编译 | 可由 `build-ffmpeg.sh` 编译 |
+| 文件/目录选择 | 原生对话框（`rfd`） | MediaStore 自动导出 + SAF 文档选择 | 原生对话框 / `BewlyTray` | `rfd` / 手填路径 |
+| 剪贴板监听 | ✅ | 手动粘贴 + 系统分享接收 | 托盘源码支持 | ❌ |
+| 下载完成关机 | ✅（可取消 30s 倒计时） | ❌ | 托盘源码支持 | ❌ |
+| 登录信息保护 | DPAPI | 应用私有目录（`allowBackup=false`） | Keychain / 0600 文件 | 0600 文件 |
+| 外部运行时依赖 | 无（无需 Node.js / aria2） | 无 | 无 | 无 |
+| 当前分发状态 | ✅ MSIX 完整构建 | ✅ Gradle APK 构建（`arm64-v8a`） | 仅裸二进制 `bewly-host` | 仅裸二进制 `bewly-host` |
 
 ## Windows
 
-见 [INSTALL-DOWNLOADS.md](./INSTALL-DOWNLOADS.md)。行为未变。
+见 [INSTALL-DOWNLOADS.md](./INSTALL-DOWNLOADS.md) 与 [BUILD-DOWNLOADS.md](./BUILD-DOWNLOADS.md)。安装 MSIX 后从开始菜单启动一次即可完成 Chrome/Edge Native Messaging 注册。
 
-## 构建
+## Android
+
+Android 独立客户端位于 `platforms/android/`（Jetpack Compose + Foreground Service + MediaStore 导出 + B 站 WebView 登录）：
+
+1. 在仓库根目录使用 `cargo-ndk` 编译原生引擎到 `platforms/android/app/src/main/jniLibs/arm64-v8a/libbewly_android.so`：
+   ```sh
+   cargo ndk -t arm64-v8a -o platforms/android/app/src/main/jniLibs build --release --manifest-path rust/Cargo.toml -p bewly-android
+   ```
+2. 按需编译内置 FFmpeg 到 `jniLibs/<abi>/libffmpeg.so`：
+   ```sh
+   bash scripts/toolchain/build-ffmpeg-docker.sh android-arm64
+   ```
+3. 在 `platforms/android/` 下使用 `./gradlew assembleDebug` / `./gradlew assembleRelease`（配置 `BEWLY_ANDROID_KEYSTORE*` 环境变量进行正式签名）或 `./gradlew testDebugUnitTest` 运行单测。
+
+详细步骤见 [platforms/android/ANDROID_STUDIO_TASK.md](../platforms/android/ANDROID_STUDIO_TASK.md)。
+
+## macOS / Linux（待重写打包脚本）
+
+- Rust 核心与 `bewly-host` 已在 GitHub Actions 的 `linux-x64`、`darwin-arm64`、`darwin-x64` 上通过测试并产出裸二进制（`bewly-host-<target>.tar.gz`）。
+- `scripts/toolchain/build-ffmpeg.sh` 已支持构建各平台的精简 LGPL FFmpeg。
+- `platforms/linux/install.sh`、`platforms/linux/bewly-download.service` 及 macOS `.app` 打包脚本目前仍停留在已退役的 Node 目录结构（`launcher.sh`、`fetch-node.sh`），尚未重写为 Rust 单文件宿主 + 内置 FFmpeg 布局，因此 `scripts/build-helper.ts` 对 `linux` / `darwin` 目标会直接提示并返回退出码 3。
+
+## 构建命令
 
 ```sh
-npx esno scripts/build-helper.ts --target win32-x64     # 转调 build-helper.ps1（需 Windows SDK 与 .NET SDK）
-npx esno scripts/build-helper.ts --target linux-x64     # 打包脚本待重写，目前仅验证 cargo build
-npx esno scripts/build-helper.ts --target darwin-arm64  # 必须在 macOS 上运行（swiftc/codesign），同上
+npx esno scripts/build-helper.ts --target win32-x64     # 转调 build-helper.ps1（需 Windows SDK、.NET SDK 与 FFmpeg）
+cargo test --manifest-path rust/Cargo.toml              # 验证全平台 Rust 核心与服务测试
+cargo build --manifest-path rust/Cargo.toml --release -p bewly-host
 ```
-
-暂存目录已存在时构建会拒绝覆盖，需显式加 `--clean` 或使用 `--out <dir>`。
-
-媒体传输已由 Rust 实现，不再依赖 aria2；合流与转 MP3 使用内置 FFmpeg，`scripts/toolchain/build-ffmpeg.sh` 也支持 linux-x64 与 darwin 目标。macOS/Linux 的打包脚本仍在沿用已退役的 Node 目录结构（`launcher.sh`、`fetch-node.sh`、`node_modules` 裁剪），重写前不能产出可安装包。
-
 
 ## 已知限制
 
-- macOS 包为 ad-hoc 签名、未公证，升级后需要重新在系统设置中允许。
-- Linux 无托盘、无剪贴板监听、无自动关机，这三项在扩展设置中按 `health.capabilities` 隐藏。
-- 仅支持 Node 24 及以上；musl（Alpine）无预编译原生模块，暂不支持。
+- macOS 与 Linux 尚未提供面向终端用户的安装器与内置 FFmpeg 成品包。
+- Linux 无托盘、无剪贴板监听、无自动关机，扩展设置会根据 `health.capabilities` 自动隐藏对应项。
+- Android 目前默认打包 `arm64-v8a` ABI；真机全链路回归测试需在实体设备或模拟器上执行。

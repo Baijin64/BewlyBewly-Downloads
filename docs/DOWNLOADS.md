@@ -1,38 +1,18 @@
 # BewlyBewly 下载集成
 
-本地开发分支，以 Bilidown 1.2.7 的下载行为为参照，下载核心独立实现，界面使用 BewlyBewly Vue 3。AI、MCP、顶栏背景修复留到后续。
+本地开发分支，以 Bilidown 1.2.7 的下载行为为参照，下载核心由 Rust 独立实现，浏览器扩展界面使用 BewlyBewly Vue 3，移动端提供 Android Jetpack Compose 独立客户端。AI、MCP、顶栏背景修复留到后续。
 
 ## 当前状态
 
-0.44.7 / 助手 0.3.0 将下载服务改为按需启动：打开界面不启动下载服务，下载、入队或本地操作首次确认后唤起，完成后约 5 秒退出；Windows 手动启动默认常驻。最近记录与配置保留只读快照，轮询不会阻止退出。详见 [后台启动与退出](DOWNLOAD-LIFECYCLE.md)。
+当前个人维护版为扩展 **0.44.7**、本地助手 **0.3.0**（协议 2）、Android 客户端 **0.44.7**。源码与构建产物在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。
 
-当前个人维护**预览版**为扩展 **0.44.7**、助手 **0.3.0**（协议 2）。助手已完成 Rust 重写：不再需要 Node.js，也不再随包携带 aria2，分片下载、续传、镜像轮换与任务队列均由 Rust 实现。合流、提取音频和转 MP3 使用安装包内置的精简版 FFmpeg（LGPL），详见 [安装说明](INSTALL-DOWNLOADS.md)。源码与安装包在 [Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads) 的私有仓库中供维护者和朋友使用。
-
-此前推荐加载、悬停预览和渲染优化保持，详情见 [加载优化与验证](LOADING-OPTIMIZATION.md)。离线观看继续采用下载 MP4 后使用系统播放器。
+- **按需启停与快照同步**：打开下载界面不启动本地服务，先展示最近配置与记录快照；执行下载、入队或本地配置/文件操作首次确认后唤起助手，完成后约 5 秒自动退出，托盘与宿主一起结束；空闲退出后重新切回下载器会自动刷新状态与目录配置。Windows 手动启动默认常驻。详见 [后台启动与退出](DOWNLOAD-LIFECYCLE.md)。
+- **纯 Rust 核心 + 内置 FFmpeg**：助手已完成 Rust 重写（`rust/crates/*`），不再需要 Node.js，也不再携带 aria2；分片下载、64 KiB 级快速暂停/恢复、`.aria2`/`.bewlypart` 断点续传、镜像轮换、WBI 签名、SQLite/LevelDB 兼容迁移、`.bilidownexport` 历史导入导出及任务队列均由 Rust 实现。合流、音频提取与转 MP3 使用安装包内置的精简版 LGPL FFmpeg，详见 [安装说明](INSTALL-DOWNLOADS.md)。
+- **Windows 托盘与外观**：宿主 `BewlyDownloadHost.exe`（Rust）与托盘 `BewlyDownloadTray.exe`（C# NativeAOT）统一使用 Bewly 图标与吉祥物绘制，支持 PerMonitorV2 DPI 适配与系统明暗主题；托盘作为纯回环 RPC 客户端与服务通信。
+- **Android 独立客户端**：`platforms/android/` 通过 JNI 内嵌 `bewly-android` 与 `libffmpeg.so`，支持视频解析与下载队列、设置与辅助工具、B 站 WebView 登录、前台保活进度通知以及 MediaStore 自动导出。
+- **页面与进度 UI**：保留推荐加载、悬停预览和渲染优化（见 [加载优化与验证](LOADING-OPTIMIZATION.md)），以及 0.44.0 统一选择按钮/开关、0.44.1 Progress 进度条、最高画质/音质自动探测、封面/UP 主元数据展示与旧历史封面补齐。
 
 感谢 [BewlyBewly 原项目](https://github.com/BewlyBewly/BewlyBewly) 与 [Bilidown 原作者王子周棋洛](https://zhouql.vip/)。本分支独立维护，不代表原作者继续更新。浏览器扩展更新后需要重载；连接器配置和任务继续使用原本机数据目录。
-
-下载进度复用 Bewly 原有 Progress 组件，使用主题色、6 像素圆角轨道和平滑宽度过渡；明确区分当前视频流/音频流，暂停保留进度且隐藏旧速度，合并与保存附件使用不可计量的处理中动画，完成后才显示已完成。支持减少动态效果和可访问的进度语义。没有新增估算总进度、剩余时间或后台轮询。
-
-任务列表展示视频封面与 UP 主，点击封面或标题打开对应视频，点击 UP 主打开其空间。待下载和下载中显示加入时间，已完成显示完成时间。正常任务已有元数据可直接展示，无需重新下载；旧记录缺少封面、UP 主或完成时间时明确显示未记录，不把导入时间当成下载时间。封面按需加载官方 HTTPS 缩略图，失败显示占位，时间使用浏览器本地时区；旧版无时区日期保留原记录。
-
-0.2.7 修复历史导入遗漏封面：旧版 `pic` 字段保留为 `cover`。重新导入相同历史时只补缺失封面，不覆盖原字段、时间和下载目录，不新增重复任务。本机旧历史 17 条已恢复封面；加载逻辑的后续改进见 [客户端对照与计划](BILIBILI-CLIENT-RESEARCH.md)。
-
-新 MSIX 不再内置 Node.js，压缩包约 27.6 MiB，安装文件约 65.1 MiB。保留 FFmpeg、aria2 和精简后的 Windows x64 迁移依赖。已有兼容系统 Node.js 24+ x64 时直接复用；本机使用原有 24.14.1，没有重复安装或升级 Node。
-
-首次从开始菜单打开助手会检测运行环境。缺少或不兼容时，原生窗口提供“下载并安装 Node.js”“重新检测”和官网入口；点击安装后从 Node.js 官方 Node 24 分支获取 x64 MSI，校验 SHA-256 和 Windows 签名后调用 Windows Installer，可能需要 UAC 授权，安装后自动重新检测并启动服务。取消或失败可重试，临时 MSI 清理；安装好的系统 Node 与连接器保留，供后续下载使用。网页端继续使用现有重试提示，GitHub 连接器下载地址等正式发布后再接。
-
-助手的新托盘菜单使用清晰的下载图标、状态区、功能图标、圆角与留白，并跟随 Windows 应用明暗主题。没有待下载任务、活动任务或关机倒计时时，对应操作禁用。双击图标打开下载器，右键打开菜单，退出仍保留原确认与进度保存行为。
-
-助手启用 PerMonitorV2 DPI 适配；托盘和程序图标包含 16 / 20 / 24 / 32 / 40 / 48 / 64 / 128 / 256 像素资源。离屏渲染检查覆盖 100%、125%、150%、200% 的浅色与深色外观；安装后的本机诊断确认为 144 DPI（150%）。预览为开发渲染图，不作为跨显示器实际点击验收证据；高对比度模式回退到系统菜单绘制。
-
-0.2.4 修复首版新菜单实际弹出时右侧裁切的问题：菜单和各行按 DPI 明确分配尺寸，关闭默认文字列的自动收窄。诊断使用与实际托盘相同的菜单控件，本机 150% 下为 402×408 像素，9 个菜单项均处于客户区内。
-
-助手 0.3.0 的 114 项 Rust 测试通过，覆盖命名与格式对拍、帧协议、`.aria2` 续传解析、SQLite/LevelDB 旧数据兼容、WBI 签名、分片下载与任务状态机；三个平台的 `cargo test` 与 Windows MSIX 打包在 CI 验证。上一代助手 0.2.8 的 49 项原生测试与实际 MSIX 验证记录保留在 `dist/installed-runtime-0.2.8-verification.json`。
-
-网页下载 UI 保留 0.44.0 的统一选择按钮与开关，以及 0.44.1 的进度条。此前 Edge 本地模拟页验证了浅色蓝、深色紫主题，以及下载列表暂停后保留 62% 并隐藏旧速度；未操作用户真实任务，证据见 `dist/download-progress-0.44.1-verification.json`。当前 0.44.7 的 111 项扩展测试、类型检查、ESLint 和生产构建通过，首次启动确认及取消后的队列行为已在模拟页验证。
-
-此前的最高音质、动态最高画质、命名预设、NFO 说明和默认合集选择继续保留。原生任务、用户设置及旧配置未修改或导入；实际播放优化开关不因 UI 更新而变化。慢网、实际 CDN 切换与重载恢复实测继续按用户决定延后。详见 `docs/DOWNLOAD-PARITY.md` 与 `dist/download-ui-0.44.0-verification.json`。
 
 ## 使用流程
 
@@ -50,8 +30,6 @@
 
 画质包括 360P、480P、720P、720P 高帧、1080P、高码、高帧、4K、HDR、杜比视界及 8K。音质包括 AAC 64K/132K/192K、杜比全景声、Hi-Res。可用性以视频与当前账号为准，不提供试看替代完整视频，不静默降级或转码。
 
-Hi-Res 使用 FLAC 或 MKV，杜比音轨使用 MKA/MKV；视频与音轨直接复制，MP3 转码必须主动选择。默认播放器是否支持相应规格取决于系统与播放器。
-
 ## 后台、工具与迁移
 
 关闭浏览器后下载继续，按需服务完成处理后退出。托盘随服务存在，提供打开下载器/设置、开始待下载、暂停、取消关机及退出。支持提示音、可选剪贴板链接监听和空闲退出；需要持续监听剪贴板时从 Windows 手动启动常驻。
@@ -68,45 +46,23 @@ Hi-Res 使用 FLAC 或 MKV，杜比音轨使用 MKA/MKV；视频与音轨直接�
 
 检测持续低缓冲卡顿时，对实际观察到的当前媒体流比较有限量的官方备用地址。仅切换同画质、编码和音轨；暂停、拖动、后台节流或缓冲充足但解码丢帧时不进行网络切换。切换失败撤销规则；需要重载时显示按钮，点击后恢复进度、音量和暂停状态。
 
-规则限定标签页及具体媒体资源，导航、过期、关闭功能时清除；状态使用浏览器会话存储，后台工作线程重启时恢复并清理孤立规则。没有外部代理、AI 上传或边下边播缓存。
+规则限定标签页及具体媒体资源，导航、过期、关闭功能时清除；状态使用浏览器会话存储，后台工作线程重启时恢复并清理孤立规则。没有外部代理、AI 上传或边下边播缓存。慢网与实际 CDN 切换实测继续按决定延后。
 
-## 数据与构建
+## 架构、数据与构建
 
-架构：网页 Vue → 扩展后台 → Native Messaging → Windows 宿主 → 独立本地服务 → aria2 / FFmpeg。网页播放优化独立于下载助手，使用浏览器自身网络路径。
+架构：网页 Vue → 扩展后台 → Native Messaging → Rust `BewlyDownloadHost`（含本地回环 HTTP/WS 服务与分片下载引擎）→ 内置 LGPL FFmpeg；Windows 托盘 `BewlyDownloadTray` 通过回环 RPC 连接服务。网页播放优化独立于下载助手，使用浏览器自身网络路径。
 
-任务和设置保存在 `%LOCALAPPDATA%/BewlyDownload/downloads.sqlite`，首次升级到协议 2 前备份数据库。下载会话只提供给本机助手，使用当前 Windows 用户 DPAPI 加密，不写入日志或验证报告。助手接口和 aria2 仅监听回环地址并使用各自随机凭据。
+任务和设置保存在 `%LOCALAPPDATA%/BewlyDownload/downloads.sqlite`，首次升级到协议 2 前备份数据库。下载会话只提供给本机助手，在 Windows 上使用当前用户 DPAPI 加密，不写入日志或验证报告。助手回环接口使用随机凭据鉴权。
 
-```powershell
-npm ci --prefix native --ignore-scripts
-npm run typecheck -- --noEmit
-npm run test:download
-npx vitest run
-```
-
-不影响当前已安装扩展的生产构建验证：
+常用本地验证命令：
 
 ```powershell
-$env:NODE_ENV = 'production'
-$env:BEWLY_BUILD_DIR = 'dist/extension-validation'
-npx run-s build:web build:prepare build:js build:bg
+pnpm typecheck --noEmit
+pnpm typecheck:scripts --noEmit
+pnpm lint
+pnpm test -- --run
+cargo test --manifest-path rust/Cargo.toml
+dotnet build platforms/windows/BewlyDownloadTray.csproj
 ```
 
-仅编译未打包助手，用于隔离测试：
-
-```powershell
-npm run build:helper -- -StageOnly
-```
-
-发布构建可设置独立的 `BEWLY_BUILD_DIR`，使用上述顺序构建、`build:helper -- -DevSign`、`pack:crx -- --source <构建目录>` 流程。需要 Node.js 24+、Windows SDK 和 .NET Framework C# 编译器；最终 MSIX 自带媒体工具，复用系统 Node.js。固定公开身份位于 `platforms/identity.json`，签名使用 Windows 证书提供器，不导出私钥，不自动更改证书信任。
-
-界面预览使用 `npx vite --config native/tests/preview/vite.config.ts`，为模拟任务，不访问真实账号。显式真实网络验证使用 `npx esno scripts/verify-download-live.ts <BV号>`，在独立目录工作，完成后关闭自建服务并移除临时会话副本。
-
-本地二进制来自用户已有的 aria2 / FFmpeg 安装，许可材料随包保存。本分支已上传到上述私有仓库，未公开发布。
-
-## 当前手动验收入口
-
-本机助手保持 0.2.7，复用原系统 Node。个人维护发布版扩展为 0.44.5；推荐 ZIP 解压后加载，当前 CRX 的直接安装启用仍未通过验收。其他机器安装 MSIX 后，从开始菜单打开一次；缺 Node 时使用本地窗口安装。此前下载功能验收记录保留，播放优化的慢网实测继续延后。
-
-自动浏览器工具只允许 HTTP / HTTPS，已拒绝访问 edge://extensions，不能代替用户操作扩展管理页。递归替换旧生成目录的操作也被自动审批拒绝；随后采用逐文件备份与更新，更新了 54 个生成文件，没有删除原目录。
-
-0.2.1 使用 CreateProcess 的显式不继承句柄模式启动独立服务。回归测试在旧实现复现了“宿主已退出但管道仍被服务持有”；修复后，安装包的应用别名连续两次请求均完整关闭管道，同时独立服务继续存活。独立真实下载也在桥接退出后完成。
+完整构建、FFmpeg 编译、Android 构建与 MSIX 签名流程见 [构建说明](BUILD-DOWNLOADS.md) 与 [平台支持](PLATFORMS.md)。历史旧版 Node 时代验证记录与差异验收表保留在 [DOWNLOAD-PARITY.md](DOWNLOAD-PARITY.md) 与 [DOWNLOAD-COMPONENTS.md](DOWNLOAD-COMPONENTS.md)。

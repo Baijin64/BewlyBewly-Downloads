@@ -1,20 +1,20 @@
 # BewlyBewly + 下载（个人维护分支）
 
-主要供维护者和身边朋友使用。当前扩展 **0.44.6**、Windows 本地连接器 **0.2.8**；不是原项目的官方续作。
+主要供维护者和身边朋友使用。当前浏览器扩展 **0.44.7**、Rust 本地下载助手 **0.3.0**（Windows MSIX + Android 独立客户端 **0.44.7**）；不是原项目的官方续作。
 
 ## 来源与致谢
 
 - **BewlyBewly 原项目：**[BewlyBewly/BewlyBewly](https://github.com/BewlyBewly/BewlyBewly)，原作者 [Hakadao](https://github.com/hakadao)。保留原项目 MIT 许可证与署名。
-- **Bilidown 原作者：**[王子周棋洛的主页](https://zhouql.vip/)。下载配置与使用流程参考 Bilidown，本分支的本地下载核心为重新实现。
+- **Bilidown 原作者：**[王子周棋洛的主页](https://zhouql.vip/)。下载配置与使用流程参考 Bilidown，本分支的本地下载核心由 Rust 独立实现。
 - **本维护分支：**[Baijin64/BewlyBewly-Downloads](https://github.com/Baijin64/BewlyBewly-Downloads)。仓库为私有，朋友需要获得仓库访问权限才能从 Releases 下载。
 
 ## 使用本分支
 
 从本仓库 Releases 下载 Chrome 扩展 ZIP 和 Windows 连接器 MSIX。ZIP 解压后，在 Chrome/Edge 的扩展管理页开启开发者模式，加载含 manifest.json 的目录。CRX 也提供用于测试，但尚未验证普通环境下直接安装启用，不能保证绕过浏览器的分发限制。
 
-连接器不再内置 Node.js，安装后从开始菜单打开一次。已有兼容 Node 会复用，缺少时在本地窗口点击“下载并安装 Node.js”；Windows 可能请求安装授权。MSIX 使用本机开发证书签名，其他电脑需要先手动信任随包的公开证书，不包含或分发签名私钥。
+下载助手已完成纯 Rust 重写（`BewlyDownloadHost.exe` + NativeAOT 托盘 `BewlyDownloadTray.exe`），**不再需要 Node.js 或 aria2**，合流与转 MP3 使用随包内置的精简版 LGPL FFmpeg。安装 MSIX 后从开始菜单打开一次即可完成浏览器 Native Messaging 注册；MSIX 使用本机开发证书签名，其他电脑需要先手动信任随包的公开证书，不包含或分发签名私钥。Android 端独立 App 位于 `platforms/android`，通过 JNI 内嵌同一套 Rust 下载引擎并通过 MediaStore 导出成品。
 
-详细步骤见 [安装说明](docs/INSTALL-DOWNLOADS.md)、[构建说明](docs/BUILD-DOWNLOADS.md) 和 [功能与验证记录](docs/DOWNLOADS.md)。
+详细步骤见 [安装说明](docs/INSTALL-DOWNLOADS.md)、[平台支持](docs/PLATFORMS.md)、[构建说明](docs/BUILD-DOWNLOADS.md) 和 [功能与验证记录](docs/DOWNLOADS.md)。
 
 下载界面先显示，实际下载或加入队列时才按需启动本地服务；首次会询问，任务结束后自动退出。Windows 手动打开助手则默认常驻，详见 [后台启动与退出](docs/DOWNLOAD-LIFECYCLE.md)。
 
